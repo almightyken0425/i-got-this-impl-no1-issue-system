@@ -11,7 +11,7 @@
 - Spec git 仲裁資料與邏輯
 - Design git 仲裁視覺與互動
 - 本 repo 跟進兩側定案
-- 配對以 `decision_framework_router` 的註冊表為準
+- 配對以 `product-scope` 的註冊表為準
 
 ---
 
@@ -30,11 +30,11 @@
 
 ## 原生工作規則
 
-- 任何改動先使用 `decision_framework_router`
+- 任何改動先使用 `product-scope`
 - 行為改動先核對 Spec
 - UI 改動先核對 Design
 - 功能與缺陷修正採測試先行
-- Markdown 改動使用 `universal_writing_linter`
+- Markdown 改動使用 `doc-markdown`
 - 跨層 branch 名稱必須一致
 - 配對 commit 的 subject 與 body 必須一致
 - 完成前執行適用驗證
