@@ -19,7 +19,10 @@ export const WORKSPACE_FIELD_RESOLUTION = 'resolution';
 export const WORKSPACE_STATUS_FALLBACK = '待處理';
 
 export interface WorkspaceIssueRow {
+  readonly restrictedFields?: readonly string[];
+  readonly fields: Readonly<Record<string, unknown>>;
   readonly id: string;
+  readonly issueTypeId: string;
   readonly key: string;
   readonly title: string;
   readonly status: string;
@@ -33,14 +36,17 @@ export function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-/** 把欄位單值 map 摺成加值列的欄位子集（不含 id/key，由呼叫端補上）。 */
+/** 把欄位單值 map 摺成加值列的欄位子集，識別欄位由呼叫端補上。 */
 export function foldWorkspaceIssueFields(
   fields: Readonly<Record<string, unknown>>,
-): Omit<WorkspaceIssueRow, 'id' | 'key'> {
+  restrictedFields: readonly string[] = [],
+): Omit<WorkspaceIssueRow, 'id' | 'key' | 'issueTypeId'> {
   const pointRaw = fields[WORKSPACE_FIELD_POINT];
   const dueRaw = fields[WORKSPACE_FIELD_DUE];
   const resolutionRaw = fields[WORKSPACE_FIELD_RESOLUTION];
   return {
+    ...(restrictedFields.length ? { restrictedFields } : {}),
+    fields,
     title: asString(fields[WORKSPACE_FIELD_TITLE]),
     status: asString(fields[WORKSPACE_FIELD_STATUS]) || WORKSPACE_STATUS_FALLBACK,
     assignee: asString(fields[WORKSPACE_FIELD_ASSIGNEE]),

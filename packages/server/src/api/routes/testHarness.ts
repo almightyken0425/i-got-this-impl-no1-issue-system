@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { Pool } from 'pg';
 
@@ -5,6 +6,7 @@ import type { AuthConfig } from '../../auth/config.js';
 import { loadEnv } from '../../db/env.js';
 import { applyMigrations } from '../../db/migrate.js';
 import { createServer } from '../index.js';
+import { permissionRepo } from '../../db/repositories/index.js';
 
 // API 整合測試共用鷹架（非 .test.ts，不被 vitest 收集為測試檔）。
 //
@@ -35,6 +37,27 @@ export interface Session {
   readonly cookie: string;
   readonly companyId: string;
   readonly accountId: string;
+}
+
+/** 定義路由的專用授權 fixture，不建立工作區或額外欄位以免干擾定義清單案例。 */
+export async function grantTypeAdminFixture(pool: Pool, session: Session): Promise<void> {
+  const now = Date.now();
+  const levelId = randomUUID();
+  const roleId = randomUUID();
+  await permissionRepo.insertLevelDefinition(pool, {
+    id: levelId, companyId: session.companyId, name: '定義測試', system: false,
+    canRead: false, canComment: false, canCreate: false, canEditOwn: false,
+    canEditAny: false, canArchive: false, canStructure: false, canAssignRole: false,
+    createdOn: now, updatedOn: now,
+  });
+  await permissionRepo.insertRole(pool, {
+    id: roleId, companyId: session.companyId, roleTitle: '定義測試', levelId,
+    typeAdmin: true, orgAdmin: false, permAdmin: false, tags: null, createdOn: now, updatedOn: now,
+  });
+  await permissionRepo.insertAccountRole(pool, {
+    id: randomUUID(), companyId: session.companyId, accountId: session.accountId, roleId,
+    createdOn: now, updatedOn: now,
+  });
 }
 
 /** 註冊一個帳號並回其 session cookie 與租戶鍵；預設 email 唯一化避免撞號。 */

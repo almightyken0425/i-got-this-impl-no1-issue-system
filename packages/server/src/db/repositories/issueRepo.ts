@@ -132,6 +132,16 @@ function toFieldValue(row: FieldValueRow): StoredFieldValue {
 // Issues
 // ============================================================
 
+/** 建單者是系統維護的稽核欄位。舊工單無可靠來源時不猜測作者。 */
+export async function recordCreator(companyId: string, issueId: string, accountId: string, exec: Executor): Promise<void> {
+  await exec.query('INSERT INTO field_set_defs (company_id, name, system) VALUES ($1, $2, true) ON CONFLICT DO NOTHING', [companyId, '基本']);
+  await exec.query(`INSERT INTO field_defs
+    (company_id, name, field_set_name, kind, value_type, system, readonly, rollupable, rollup_fn, tracked, label)
+    VALUES ($1, 'CreateBy', '基本', 'single', 'user', true, true, false, null, false, '建立者')
+    ON CONFLICT (company_id, name) DO UPDATE SET readonly = true, system = true`, [companyId]);
+  await setFieldValue({ companyId, issueId, fieldName: 'CreateBy', value: accountId }, exec);
+}
+
 /** 建立工單；`issueKey` 由呼叫端以 domain 的 assignIssueKey 產生後傳入。 */
 export async function createIssue(input: Issue, exec: Executor = getPool()): Promise<Issue> {
   const row = await runOne<IssueRow>(
@@ -152,7 +162,9 @@ export async function getIssue(
   const row = await runOne<IssueRow>(
     exec,
     `SELECT id, company_id, issue_set_id, issue_type_id, issue_key
-     FROM issues WHERE company_id = $1 AND id = $2`,
+     FROM issues WHERE company_id = $1 AND id = $2
+       AND NOT EXISTS (SELECT 1 FROM issue_field_values v WHERE v.company_id = issues.company_id
+         AND v.issue_id = issues.id AND v.field_name = 'Archived' AND v.value = 'true'::jsonb)`,
     [companyId, id],
   );
   return row ? toIssue(row) : undefined;
@@ -166,7 +178,9 @@ export async function getIssueByKey(
   const row = await runOne<IssueRow>(
     exec,
     `SELECT id, company_id, issue_set_id, issue_type_id, issue_key
-     FROM issues WHERE company_id = $1 AND issue_key = $2`,
+     FROM issues WHERE company_id = $1 AND issue_key = $2
+       AND NOT EXISTS (SELECT 1 FROM issue_field_values v WHERE v.company_id = issues.company_id
+         AND v.issue_id = issues.id AND v.field_name = 'Archived' AND v.value = 'true'::jsonb)`,
     [companyId, issueKey],
   );
   return row ? toIssue(row) : undefined;
@@ -180,7 +194,10 @@ export async function listIssuesByIssueSet(
   const rows = await run<IssueRow>(
     exec,
     `SELECT id, company_id, issue_set_id, issue_type_id, issue_key
-     FROM issues WHERE company_id = $1 AND issue_set_id = $2 ORDER BY issue_key`,
+     FROM issues WHERE company_id = $1 AND issue_set_id = $2
+       AND NOT EXISTS (SELECT 1 FROM issue_field_values v WHERE v.company_id = issues.company_id
+         AND v.issue_id = issues.id AND v.field_name = 'Archived' AND v.value = 'true'::jsonb)
+     ORDER BY issue_key`,
     [companyId, issueSetId],
   );
   return rows.map(toIssue);
@@ -207,12 +224,14 @@ export async function deleteIssue(
   id: string,
   exec: Executor = getPool(),
 ): Promise<boolean> {
-  const rows = await run<IssueRow>(
-    exec,
-    'DELETE FROM issues WHERE company_id = $1 AND id = $2 RETURNING id',
-    [companyId, id],
-  );
-  return rows.length > 0;
+  if (await getIssue(companyId, id, exec) === undefined) return false;
+  await exec.query('INSERT INTO field_set_defs (company_id, name, system) VALUES ($1, $2, true) ON CONFLICT DO NOTHING', [companyId, '基本']);
+  await exec.query(`INSERT INTO field_defs
+    (company_id, name, field_set_name, kind, value_type, system, readonly, rollupable, rollup_fn, tracked, label)
+    VALUES ($1, 'Archived', '基本', 'single', 'boolean', true, true, false, null, false, '已封存')
+    ON CONFLICT (company_id, name) DO UPDATE SET readonly = true, system = true`, [companyId]);
+  await setFieldValue({ companyId, issueId: id, fieldName: 'Archived', value: true }, exec);
+  return true;
 }
 
 // ============================================================

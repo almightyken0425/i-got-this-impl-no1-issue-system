@@ -4,6 +4,8 @@ import type { FastifyInstance, FastifyPluginAsync, preHandlerHookHandler } from 
 import type { Pool } from 'pg';
 
 import { currentIdentity } from '../../auth/middleware.js';
+import { writeField } from '../../db/repositories/rollupRepo.js';
+import { createIssueReadProjection, type IssueReadProjection } from '../issueReadProjection.js';
 import { withTransaction } from '../../db/client.js';
 import { containerRepo, fieldRepo, issueRepo, permissionRepo, viewRepo } from '../../db/repositories/index.js';
 import type {
@@ -16,6 +18,7 @@ import type {
 } from '../../db/repositories/index.js';
 import type { Executor } from '../../db/repositories/index.js';
 import { buildContainerIndex, computeEffectivePermission } from '../../permission/index.js';
+import { makeIssueAccessGuard, permissionAtIssueSet } from '../issueAccess.js';
 import { changeIssueStatus, formatIssueKey, invalid, recordFieldChange } from '../../domain/index.js';
 import type {
   FieldChangeInput,
@@ -128,7 +131,7 @@ const FIELD_SEEDS: readonly FieldSeed[] = [
   { name: FIELD_TITLE, label: '標題', valueType: 'text', tracked: false },
   { name: FIELD_STATUS, label: '狀態', valueType: 'text', tracked: true },
   { name: FIELD_ASSIGNEE, label: '負責人', valueType: 'text', tracked: true },
-  { name: FIELD_POINT, label: '點數', valueType: 'number', tracked: true },
+  { name: FIELD_POINT, label: '點數', valueType: 'number', tracked: true, rollupable: true, rollupFn: 'sum' },
   { name: FIELD_DUE, label: '到期日', valueType: 'date', tracked: true },
   { name: FIELD_RESOLUTION, label: '結案原因', valueType: 'text', tracked: false },
   {
@@ -194,6 +197,10 @@ async function ensureIssueType(
       await fieldRepo.insertFieldDef(fieldDef, tx);
     }
   }
+
+  await fieldRepo.insertFieldDef({ companyId, name: 'WorkLog', fieldSetName: DEFAULT_FIELD_SET,
+    kind: 'multi', valueType: 'number', system: true, readonly: false, rollupable: true,
+    rollupFn: 'sum', tracked: false, label: '工時' }, tx);
 
   // ChangeLog 為系統寫入的多筆欄位，供 recordFieldChange 追加記錄；
   // issue_field_records 對 (company_id, field_name) 有外鍵指向 field_defs，
@@ -412,12 +419,13 @@ function hasFieldValue(value: unknown): boolean {
 async function foldIssueRow(
   pool: Pool,
   companyId: string,
-  issue: { id: string; issueKey: string },
+  issue: { id: string; issueKey: string; issueTypeId: string },
+  projection: IssueReadProjection,
 ): Promise<WorkspaceIssueRow> {
   const values = await issueRepo.listFieldValues(companyId, issue.id, pool);
   const fields: Record<string, unknown> = {};
   for (const v of values) fields[v.fieldName] = v.value;
-  return { id: issue.id, key: issue.issueKey, ...foldWorkspaceIssueFields(fields) };
+  return { id: issue.id, key: issue.issueKey, issueTypeId: issue.issueTypeId, ...foldWorkspaceIssueFields(projection.fields(issue.id, fields), projection.restrictedFields(issue.id)) };
 }
 
 // ---- 輸入 schema ----
@@ -488,6 +496,7 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRoutesOptions> = async
   const { pool, requireAuth } = opts;
 
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', makeIssueAccessGuard(pool));
 
   // 啟動工作區並回脈絡；冪等，前端登入後首呼即可拿到工單集與型別。
   app.get('/', async (request, reply) => {
@@ -531,10 +540,13 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRoutesOptions> = async
   app.get('/issues', async (request, reply) => {
     const { accountId, companyId } = currentIdentity(request);
     const context = await ensureWorkspace(pool, companyId, accountId);
+    const permission = await permissionAtIssueSet(pool, currentIdentity(request), context.issueSet.id);
+    if (!permission.canRead) return sendError(reply, 403, 'FORBIDDEN', '沒有此管理域的讀取權限');
     const issues = await issueRepo.listIssuesByIssueSet(companyId, context.issueSet.id, pool);
     const rows: WorkspaceIssueRow[] = [];
+    const projection = await createIssueReadProjection(pool, currentIdentity(request));
     for (const issue of issues) {
-      rows.push(await foldIssueRow(pool, companyId, issue));
+      rows.push(await foldIssueRow(pool, companyId, issue, projection));
     }
     return reply.status(200).send({ issues: rows });
   });
@@ -600,6 +612,7 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRoutesOptions> = async
         if (body.due !== undefined && body.due !== '') await setField(FIELD_DUE, body.due);
 
         const fieldDefs = await fieldRepo.listFieldDefs(companyId, tx);
+        await issueRepo.recordCreator(companyId, created.id, accountId, tx);
         const entries = recordFieldChange({ changes, actor: accountId, now, fieldDefs });
         for (const entry of entries) {
           await fieldRepo.appendChangeLog(
@@ -610,7 +623,7 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRoutesOptions> = async
         return created;
       }, pool);
 
-      const row = await foldIssueRow(pool, companyId, issue);
+      const row = await foldIssueRow(pool, companyId, issue, await createIssueReadProjection(pool, currentIdentity(request)));
       return reply.status(201).send({ issue: row });
     },
   );
@@ -639,6 +652,7 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRoutesOptions> = async
         | { readonly ok: true };
 
       const outcome = await withTransaction<UpdateOutcome>(async (tx) => {
+        await containerRepo.lockCompanyForUpdate(companyId, tx);
         const now = Date.now();
         const fieldValues = await issueRepo.listFieldValues(companyId, issueId, tx);
         const byName = new Map(fieldValues.map((v) => [v.fieldName, v.value]));
@@ -705,7 +719,7 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRoutesOptions> = async
           await (body.assignee === '' ? clear(FIELD_ASSIGNEE) : write(FIELD_ASSIGNEE, body.assignee));
         }
         if (body.point !== undefined) {
-          await (body.point === null ? clear(FIELD_POINT) : write(FIELD_POINT, body.point));
+          await writeField(tx, companyId, issueId, FIELD_POINT, body.point, accountId);
         }
         if (body.due !== undefined) {
           await (body.due === null || body.due === '' ? clear(FIELD_DUE) : write(FIELD_DUE, body.due));
@@ -726,7 +740,7 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRoutesOptions> = async
         return sendValidationFailure(reply, outcome);
       }
 
-      const row = await foldIssueRow(pool, companyId, issue);
+      const row = await foldIssueRow(pool, companyId, issue, await createIssueReadProjection(pool, currentIdentity(request)));
       return reply.status(200).send({ issue: row });
     },
   );

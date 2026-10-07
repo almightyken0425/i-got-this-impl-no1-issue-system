@@ -41,7 +41,7 @@ export const DATA_DISPLAY_TOKENS = {
     // 欄距：compact 收到 sm 換掃描密度，base 與 relaxed 用 md。
     CELL_PADDING_X_BY_DENSITY,
     CELL_INNER_GAP: SPACING.sm, // 格內 avatar / icon 與文字的距離
-    COLUMN_MIN_WIDTH: SPACING['3xl'] * 2, // 80，未指定欄寬時的下界
+    COLUMN_MIN_WIDTH: SPACING['3xl'] * 3, // 120，未指定欄寬時保留標籤可讀寬度
     GROUP_INDENT: SPACING.md, // 分組啟用時工單列的縮排
 
     // 字體：標題列走 label、儲存格走 tableCell、編號走 mono code、分組標題走 overline。

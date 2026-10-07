@@ -1,10 +1,19 @@
-// 關聯 API · /api/relations 之下的唯讀查詢
-//
-// 供工單詳情頁的關聯區使用：型別定義（含 symmetric／name）與正反查兩端。
-// 關聯的建立與移除不在此輪範圍內，不封裝——本畫面關聯區唯讀。
+// 關聯 API：定義建立、工單關聯建立、移除與正反查。
 
 import { apiFetch } from './client';
 import type { IssueRelation, RelationTypeDefinition } from './types';
+
+export async function createRelationType(input: { name: string; exclusive?: boolean; acyclic?: boolean; ordered?: boolean; symmetric?: boolean; rollup?: boolean }): Promise<RelationTypeDefinition> {
+  return (await apiFetch<{ relationType: RelationTypeDefinition }>('/api/relations/types', { method: 'POST', body: input })).relationType;
+}
+
+export async function createRelation(fromIssueId: string, toIssueId: string, relationTypeId: string): Promise<IssueRelation> {
+  return (await apiFetch<{ relation: IssueRelation }>('/api/relations/edges', { method: 'POST', body: { fromIssueId, toIssueId, relationTypeId } })).relation;
+}
+
+export function removeRelation(id: string): Promise<void> {
+  return apiFetch(`/api/relations/edges/${id}`, { method: 'DELETE' });
+}
 
 /** 列出本 Company 的關聯型別定義，依名稱排序。 */
 export async function listRelationTypes(): Promise<readonly RelationTypeDefinition[]> {

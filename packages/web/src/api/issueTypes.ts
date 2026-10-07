@@ -2,8 +2,10 @@
 //
 // 供 TypeDefinitionScreen 的「工單型別」分頁使用。
 
-import { apiFetch } from './client';
-import type { IssueTypeDefinition } from './types';
+import { ApiError, apiFetch } from './client';
+import { listFieldDefs } from './fields';
+import type { FieldDef, IssueTypeDefinition, WorkflowDefinition } from './types';
+import { getWorkflowDefinition } from './workflow';
 
 export interface CreateIssueTypeInput {
   readonly name: string;
@@ -24,6 +26,32 @@ export async function createIssueType(input: CreateIssueTypeInput): Promise<Issu
 export async function listIssueTypes(): Promise<readonly IssueTypeDefinition[]> {
   const res = await apiFetch<{ issueTypes: readonly IssueTypeDefinition[] }>('/api/issue-types');
   return res.issueTypes;
+}
+
+export interface IssueTypeDetails {
+  readonly fieldDefs: readonly FieldDef[];
+  readonly singleFieldDefs: readonly FieldDef[];
+  readonly workflow: WorkflowDefinition;
+}
+
+/** 依工單所屬型別取得詳情欄位與流程，保留完整欄位名稱供歷史記錄顯示。 */
+export async function getIssueTypeDetails(issueTypeId: string): Promise<IssueTypeDetails> {
+  const [issueTypes, fieldDefs, workflow] = await Promise.all([
+    listIssueTypes(),
+    listFieldDefs(),
+    getWorkflowDefinition(issueTypeId),
+  ]);
+  const issueType = issueTypes.find((type) => type.id === issueTypeId);
+  if (issueType === undefined) {
+    throw new ApiError(404, 'ISSUE_TYPE_NOT_FOUND', '找不到工單型別');
+  }
+  return {
+    fieldDefs,
+    singleFieldDefs: fieldDefs.filter(
+      (field) => field.kind === 'single' && issueType.fieldSets.includes(field.fieldSetName),
+    ),
+    workflow,
+  };
 }
 
 export interface UpdateIssueTypeInput {

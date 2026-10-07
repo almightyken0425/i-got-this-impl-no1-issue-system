@@ -218,7 +218,10 @@ suite('issue routes', () => {
     expect(got.json().fieldValue.value).toBe('修復登入頁');
 
     const listed = await call({ method: 'GET', url: `/api/issues/${issue.id}/fields` });
-    expect(listed.json().fieldValues).toHaveLength(1);
+    expect(listed.json().fieldValues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ fieldName: FIELD_NAME, value: '修復登入頁' }),
+      expect.objectContaining({ fieldName: 'CreateBy', value: session.accountId }),
+    ]));
 
     const removed = await call({
       method: 'DELETE',

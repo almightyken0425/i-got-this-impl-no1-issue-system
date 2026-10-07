@@ -52,7 +52,7 @@ async function seedContainers(pool: Pool, companyId: string): Promise<Containers
     // uq_issue_type_definitions_company_name。
     await client.query(
       'INSERT INTO issue_type_definitions (id, company_id, name, label, field_sets, system) VALUES ($1,$2,$3,$4,$5,$6)',
-      [issueTypeId, companyId, 'view-fixture-task', 'Task', JSON.stringify([]), false],
+      [issueTypeId, companyId, 'view-fixture-task', 'Task', JSON.stringify(['基本']), false],
     );
     await client.query('COMMIT');
     return { teamId, productId, mgmtId, issueSetId, issueTypeId };

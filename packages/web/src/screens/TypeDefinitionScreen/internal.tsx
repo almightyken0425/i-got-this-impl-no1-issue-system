@@ -183,7 +183,9 @@ export function FieldForm({ onSubmit, onCancel, submitting }: FieldFormProps) {
   const [rollupable, setRollupable] = useState(false);
   const [rollupFn, setRollupFn] = useState<FieldDef['rollupFn']>(null);
 
-  const canSubmit = name.trim() !== '' && label.trim() !== '' && valueType.trim() !== '';
+  const validRollup = !rollupable || (kind === 'single' && rollupFn !== null &&
+    (rollupFn === 'sum' ? valueType === 'number' : valueType === 'date'));
+  const canSubmit = name.trim() !== '' && label.trim() !== '' && valueType.trim() !== '' && validRollup;
 
   return (
     <FormShell>

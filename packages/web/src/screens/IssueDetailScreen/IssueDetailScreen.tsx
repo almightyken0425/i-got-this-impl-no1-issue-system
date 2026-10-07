@@ -6,11 +6,10 @@
 // 對側 spec：no3_product_specs/no1_issue_system/no2_screens/no5_issue_detail_screen.md
 // 另讀 no3_logics/no6_changelog_logic.md（listIssueChangelog）與
 // no3_logics/no1_relation_integrity_logic.md（listIssueRelations）。
-// 本畫面尚無對應 design git 來源檔，見 tokens.ts 開頭說明。
+// 對側 design：30_screens/no5_issue_detail_screen/no5_issue_detail_screen.jsx。
 //
-// 資料來源：一次 useAsync 內 Promise.all 八支唯讀 API（工單基本識別、欄位
-// 定義、欄位值、異動歷史、關聯型別、正查關聯、反查關聯、工作區脈絡），
-// 關聯的對側工單編號另在同一 fetcher 內第二階段解析（見 resolveCounterpartKeys）。
+// 資料來源：工單、欄位值、歷史與關聯並行讀取，再依工單型別取得欄位配方與
+// 流程。關聯的對側工單編號在同一 fetcher 內解析（見 resolveCounterpartKeys）。
 // 任一欄位／Status 寫入成功後整個 reload()，不做樂觀本地更新——失敗時畫面
 // 自然維持原資料，滿足 Spec「操作失敗時 Status 維持原值」而不必另寫回滾。
 //
@@ -25,8 +24,8 @@ import { useNavigate, useParams } from 'react-router';
 
 import {
   ApiError,
-  fieldsApi,
   issuesApi,
+  issueTypesApi,
   relationsApi,
   workspaceApi,
 } from '../../api';
@@ -34,21 +33,26 @@ import type {
   ChangeLogEntry,
   FieldDef,
   IssueFieldValue,
+  IssueContext,
   IssueRelation,
   IssueSummary,
   RelationTypeDefinition,
   UpdateIssueInput,
-  WorkspaceContext,
+  WorkflowDefinition,
 } from '../../api';
 import { Button, Select } from '../../components/controls';
+import { useCurrentView } from '../../app/CurrentViewContext';
+import { RelationForm, RollupField, WorkLogPanel } from './PlanningControls';
 import { EmptyState } from '../../components/data';
-import { Toolbar } from '../../components/gantt';
+import { useAuth } from '../../auth/AuthContext';
 import { useAsync } from '../../hooks/useAsync';
-import { FONT_FAMILY, NUMERIC_FONT_VARIANT, TYPE_STYLES, useTheme } from '../../theme';
+import { FONT_FAMILY, SPACING, TYPE_STYLES, useTheme } from '../../theme';
 import { typeStyle } from '../typeStyle';
 import {
   ChangeLogRow,
   displayValue,
+  personLabel,
+  relationLabel,
   EditableTextField,
   FieldRow,
   ReadOnlyValue,
@@ -85,8 +89,10 @@ function orderFieldDefs(defs: readonly FieldDef[]): readonly FieldDef[] {
 }
 
 interface IssueDetailData {
+  readonly context: IssueContext;
   readonly issue: IssueSummary;
   readonly fieldDefs: readonly FieldDef[];
+  readonly singleFieldDefs: readonly FieldDef[];
   readonly fieldValues: readonly IssueFieldValue[];
   readonly changeLog: readonly ChangeLogEntry[];
   readonly relationTypes: readonly RelationTypeDefinition[];
@@ -94,7 +100,7 @@ interface IssueDetailData {
   readonly relationsTo: readonly IssueRelation[];
   /** 關聯對側工單 id → issueKey；查無（如已刪除）的項不進表，顯示端回退用 id。 */
   readonly counterpartKeys: ReadonlyMap<string, string>;
-  readonly workspace: WorkspaceContext;
+  readonly workflow: WorkflowDefinition;
 }
 
 /** 關聯清單的對側工單 id 集合去重後並行解析 issueKey；單筆查詢失敗（如已刪除）不拖垮整頁，跳過即可。 */
@@ -102,21 +108,10 @@ async function resolveCounterpartKeys(
   relationsFrom: readonly IssueRelation[],
   relationsTo: readonly IssueRelation[],
 ): Promise<ReadonlyMap<string, string>> {
-  const ids = new Set<string>();
-  for (const r of relationsFrom) ids.add(r.toIssueId);
-  for (const r of relationsTo) ids.add(r.fromIssueId);
-
-  const entries = await Promise.all(
-    [...ids].map(async (id): Promise<readonly [string, string] | undefined> => {
-      try {
-        const summary = await issuesApi.getIssue(id);
-        return [id, summary.issueKey] as const;
-      } catch {
-        return undefined;
-      }
-    }),
-  );
-  return new Map(entries.filter((e): e is readonly [string, string] => e !== undefined));
+  return new Map([
+    ...relationsFrom.map(r => [r.toIssueId, r.counterpartKey ?? r.toIssueId] as const),
+    ...relationsTo.map(r => [r.fromIssueId, r.counterpartKey ?? r.fromIssueId] as const),
+  ]);
 }
 
 interface RelationsView {
@@ -136,11 +131,15 @@ function buildRelationsView(data: IssueDetailData): RelationsView {
   const children: RelationGroupItem[] = [];
   const otherByType = new Map<string, { typeName: string; items: RelationGroupItem[] }>();
 
-  const addOther = (relationTypeId: string, counterpartId: string) => {
+  const itemOf = (relation: IssueRelation, id: string): RelationGroupItem => ({ id, key: keyOf(id),
+    relationId: relation.id, canRemove: relation.canRemove ?? false, readable: relation.counterpartReadable ?? false });
+  const addOther = (relation: IssueRelation, counterpartId: string, direction: 'outgoing' | 'incoming') => {
+    const relationTypeId = relation.relationTypeId;
     const typeName = typesById.get(relationTypeId)?.name ?? '未知關聯型別';
     const bucket = otherByType.get(relationTypeId) ?? { typeName, items: [] };
-    if (!bucket.items.some((item) => item.id === counterpartId)) {
-      bucket.items.push({ id: counterpartId, key: keyOf(counterpartId) });
+    if (!bucket.items.some((item) => item.relationId === relation.id)) {
+      bucket.items.push({ ...itemOf(relation, counterpartId),
+        ...(!typesById.get(relationTypeId)?.symmetric ? { direction } : {}) });
     }
     otherByType.set(relationTypeId, bucket);
   };
@@ -148,17 +147,17 @@ function buildRelationsView(data: IssueDetailData): RelationsView {
   // 正查（this issue 為持有端）：母子鏈下對側為子工單，其餘型別對側走一般分組。
   for (const r of data.relationsFrom) {
     if (childrenType !== undefined && r.relationTypeId === childrenType.id) {
-      children.push({ id: r.toIssueId, key: keyOf(r.toIssueId) });
+      children.push(itemOf(r, r.toIssueId));
     } else {
-      addOther(r.relationTypeId, r.toIssueId);
+      addOther(r, r.toIssueId, 'outgoing');
     }
   }
   // 反查（this issue 為被指端）：母子鏈下對側為上層（母），其餘型別對側走一般分組。
   for (const r of data.relationsTo) {
     if (childrenType !== undefined && r.relationTypeId === childrenType.id) {
-      parents.push({ id: r.fromIssueId, key: keyOf(r.fromIssueId) });
+      parents.push(itemOf(r, r.fromIssueId));
     } else {
-      addOther(r.relationTypeId, r.fromIssueId);
+      addOther(r, r.fromIssueId, 'incoming');
     }
   }
 
@@ -171,35 +170,44 @@ function buildRelationsView(data: IssueDetailData): RelationsView {
 }
 
 export function IssueDetailScreen() {
+  const { issueId = '' } = useParams<{ issueId: string }>();
+  // 換工單時一起重建資料與編輯狀態，避免沿用前張工單的流程選擇。
+  return <IssueDetailContent key={issueId} issueId={issueId} />;
+}
+
+function IssueDetailContent({ issueId }: { readonly issueId: string }) {
   const { theme } = useTheme();
   const navigate = useNavigate();
-  const { issueId = '' } = useParams<{ issueId: string }>();
+  const { account } = useAuth();
+  const { currentView } = useCurrentView();
 
   const fetcher = useCallback(async (): Promise<IssueDetailData> => {
-    const [issue, fieldDefs, fieldValues, changeLog, relationTypes, relationsFrom, relationsTo, workspace] =
+    const [issue, fieldValues, changeLog, relationTypes, relationsFrom, relationsTo, context] =
       await Promise.all([
         issuesApi.getIssue(issueId),
-        fieldsApi.listFieldDefs(),
         issuesApi.listFieldValues(issueId),
         issuesApi.listChangelog(issueId),
         relationsApi.listRelationTypes(),
         relationsApi.listRelationsFrom(issueId),
         relationsApi.listRelationsTo(issueId),
-        workspaceApi.getWorkspace(),
+        issuesApi.getIssueContext(issueId, currentView?.calendarName),
       ]);
-    const counterpartKeys = await resolveCounterpartKeys(relationsFrom, relationsTo);
+    const [typeDetails, counterpartKeys] = await Promise.all([
+      issueTypesApi.getIssueTypeDetails(issue.issueTypeId),
+      resolveCounterpartKeys(relationsFrom, relationsTo),
+    ]);
     return {
       issue,
-      fieldDefs,
+      context,
+      ...typeDetails,
       fieldValues,
       changeLog,
       relationTypes,
       relationsFrom,
       relationsTo,
       counterpartKeys,
-      workspace,
     };
-  }, [issueId]);
+  }, [issueId, currentView?.calendarName]);
   const { data, loading, error, reload } = useAsync(fetcher);
 
   const [pendingField, setPendingField] = useState<string | null>(null);
@@ -210,14 +218,16 @@ export function IssueDetailScreen() {
     async (fieldName: string, patch: UpdateIssueInput) => {
       // 同一時間只允許一筆欄位寫入在飛行中，避免兩筆並發 PATCH 互相踩到
       // pendingField 的記帳（比照 KanbanScreen 的 pendingKey 單筆語意）。
-      if (pendingField !== null) return;
+      if (pendingField !== null) return false;
       setPendingField(fieldName);
       setFieldError(undefined);
       try {
         await workspaceApi.updateIssue(issueId, patch);
         await reload();
+        return true;
       } catch (err: unknown) {
         setFieldError(err instanceof ApiError ? err.message : '更新失敗');
+        return false;
       } finally {
         setPendingField(null);
       }
@@ -229,19 +239,25 @@ export function IssueDetailScreen() {
   // 不做型別轉換——對齊 design 定案，只有 point（白名單內）特殊處理數字。
   const commitGenericField = useCallback(
     async (fieldName: string, text: string) => {
-      if (pendingField !== null) return;
+      if (pendingField !== null) return false;
       setPendingField(fieldName);
       setFieldError(undefined);
       try {
-        await issuesApi.updateFieldValue(issueId, fieldName, text);
+        const def = data?.singleFieldDefs.find(field => field.name === fieldName);
+        const value = text.trim() === '' ? null : def?.valueType === 'number' ? Number(text) :
+          def?.valueType === 'boolean' ? text === 'true' : text;
+        if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('請填寫有效數字');
+        await issuesApi.updateFieldValue(issueId, fieldName, value);
         await reload();
+        return true;
       } catch (err: unknown) {
-        setFieldError(err instanceof ApiError ? err.message : '更新失敗');
+        setFieldError(err instanceof Error ? err.message : '更新失敗');
+        return false;
       } finally {
         setPendingField(null);
       }
     },
-    [issueId, reload, pendingField],
+    [issueId, reload, pendingField, data?.singleFieldDefs],
   );
 
   // 一般欄位（非 Status）文字提交：型別轉換與空值語意集中於此，EditableTextField 只管字串草稿。
@@ -251,28 +267,23 @@ export function IssueDetailScreen() {
       switch (fieldName) {
         case 'title':
           // title 不可清空；未通過驗證就靜默忽略，草稿留在編輯框待補內容。
-          if (trimmed === '') return;
-          void commitField('title', { title: trimmed });
-          return;
+          if (trimmed === '') { setFieldError('標題不能留白'); return false; }
+          return commitField('title', { title: trimmed });
         case 'assignee':
-          void commitField('assignee', { assignee: text });
-          return;
+          return commitField('assignee', { assignee: text });
         case 'point': {
           if (trimmed === '') {
-            void commitField('point', { point: null });
-            return;
+            return commitField('point', { point: null });
           }
           const parsed = Number(trimmed);
           if (!Number.isFinite(parsed)) {
             setFieldError('StoryPoint 須為數字');
-            return;
+            return false;
           }
-          void commitField('point', { point: parsed });
-          return;
+          return commitField('point', { point: parsed });
         }
         case 'due':
-          void commitField('due', { due: trimmed === '' ? null : trimmed });
-          return;
+          return commitField('due', { due: trimmed === '' ? null : trimmed });
         default:
           return;
       }
@@ -289,14 +300,14 @@ export function IssueDetailScreen() {
     [data?.fieldDefs],
   );
   const singleFieldDefs = useMemo(
-    () => orderFieldDefs((data?.fieldDefs ?? []).filter((d) => d.kind === 'single')),
-    [data?.fieldDefs],
+    () => orderFieldDefs(data?.singleFieldDefs ?? []),
+    [data?.singleFieldDefs],
   );
 
   const currentStatus = asString(fieldValueByName.get('status'));
   const terminalSet = useMemo(
-    () => new Set((data?.workspace.statuses ?? []).filter((s) => s.isTerminal).map((s) => s.name)),
-    [data?.workspace.statuses],
+    () => new Set((data?.workflow.states ?? []).filter((s) => s.isTerminal).map((s) => s.name)),
+    [data?.workflow.states],
   );
 
   const applyStatusChange = useCallback(
@@ -336,24 +347,39 @@ export function IssueDetailScreen() {
 
   const relationsView = useMemo(() => (data === undefined ? undefined : buildRelationsView(data)), [data]);
 
+  async function removeRelation(id: string): Promise<boolean> {
+    if (pendingField !== null) return false;
+    setPendingField('relation');
+    setFieldError(undefined);
+    try { await relationsApi.removeRelation(id); await reload(); return true; }
+    catch (err) { setFieldError(err instanceof Error ? err.message : '移除失敗'); return false; }
+    finally { setPendingField(null); }
+  }
+
   // ─── 欄位區單列渲染 ──────────────────────────────────────────
   function renderFieldValue(def: FieldDef) {
-    const raw = fieldValueByName.get(def.name);
+    const stored = fieldValueByName.get(def.name);
+    const raw = def.name === 'CreateBy' ? personLabel(String(stored ?? ''), account) : stored;
+    const rollup = data?.context.rollups.find(row => row.fieldName === def.name);
+    if (!data?.context.canEdit || rollup?.restricted || (rollup?.hasChildren && rollup.mode === 'auto')) {
+      return <ReadOnlyValue text={rollup?.restricted ? '彙總來源權限不足' : displayValue(raw)} />;
+    }
 
     if (def.name === 'status') {
-      const statusOptions = (data?.workspace.statuses ?? []).map((s) => ({ value: s.name, label: s.name }));
+      const statusOptions = (data?.workflow.states ?? []).map((s) => ({ value: s.name, label: s.name }));
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: T.FIELD_CONFIRM_GAP, flex: 1, minWidth: 0 }}>
           <Select
+            prefix="狀態"
             options={statusOptions}
-            disabled={pendingField === 'status'}
+            disabled={pendingField !== null}
             onChange={onStatusChange}
             {...(currentStatus === '' ? {} : { value: currentStatus })}
           />
           {resolutionTarget !== null && (
             <StatusResolutionPrompt
               targetStatus={resolutionTarget}
-              options={data?.workspace.resolutionOptions ?? []}
+              options={data?.workflow.resolutionOptions ?? []}
               submitting={pendingField === 'status'}
               onCancel={onResolutionCancel}
               onConfirm={onResolutionConfirm}
@@ -379,135 +405,89 @@ export function IssueDetailScreen() {
       const textValue = def.name === 'point' ? (typeof raw === 'number' ? String(raw) : '') : asString(raw);
       return (
         <EditableTextField
+          label={def.label}
+          onCancel={() => setFieldError(undefined)}
           value={textValue}
-          disabled={pendingField === def.name}
+          disabled={pendingField !== null}
           onCommit={(text) => commitTextField(def.name, text)}
         />
       );
     }
 
-    // 白名單外、readonly=false 的欄位（含自訂欄位）：對齊 design 定案一律可編輯，
-    // 走 issues.ts 泛用路徑，值當字串送出，不分值型別。
+    if (def.valueType === 'boolean') return <Select value={raw === null || raw === undefined ? '' : String(raw)}
+      options={[{ value: '', label: '未填寫' }, { value: 'false', label: '否' }, { value: 'true', label: '是' }]}
+      disabled={pendingField !== null} onChange={text => void commitGenericField(def.name, text)} />;
     return (
       <EditableTextField
-        value={asString(raw)}
-        disabled={pendingField === def.name}
-        onCommit={(text) => void commitGenericField(def.name, text)}
+        label={def.label}
+        onCancel={() => setFieldError(undefined)}
+        value={raw === null || raw === undefined ? '' : String(raw)}
+        disabled={pendingField !== null}
+        onCommit={(text) => commitGenericField(def.name, text)}
       />
     );
   }
 
-  return (
-    <div
-      style={{
-        width: '100%',
-        minHeight: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        background: theme.bg.base,
-        color: theme.text.primary,
-        fontFamily: FONT_FAMILY.base,
-      }}
-    >
-      <Toolbar
-        left={
-          <div style={{ display: 'flex', alignItems: 'center', gap: T.HEADER_GAP }}>
-            <Button variant="ghost" label="← 返回" onClick={() => navigate(-1)} />
-            <span
-              style={{
-                ...typeStyle(T.HEADER_KEY_TYPE),
-                color: theme.text.primary,
-                fontFamily: FONT_FAMILY.mono,
-                fontVariantNumeric: NUMERIC_FONT_VARIANT,
-              }}
-            >
-              {data?.issue.issueKey ?? issueId}
-            </span>
-          </div>
-        }
-      />
-
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: T.SECTION_GAP,
-          padding: `${T.PAGE_PADDING_Y}px ${T.PAGE_PADDING_X}px`,
-        }}
-      >
-        {error !== undefined ? (
-          <EmptyState
-            icon="clock"
-            title="載入工單失敗"
-            description={error}
-            action={{ label: '重試', onClick: () => void reload() }}
-          />
-        ) : loading && data === undefined ? (
-          <span style={{ ...typeStyle(TYPE_STYLES.caption), color: theme.text.tertiary }}>載入中…</span>
-        ) : data !== undefined ? (
-          <>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: T.BODY_COLUMNS,
-                gap: T.BODY_GAP,
-                alignItems: 'start',
-                minWidth: T.BODY_MIN_WIDTH,
-              }}
-            >
-              <SectionPanel title="欄位">
-                {singleFieldDefs.map((def) => (
-                  <FieldRow key={def.name} label={def.label}>
-                    {renderFieldValue(def)}
-                  </FieldRow>
-                ))}
-                {fieldError !== undefined && (
-                  <span style={{ ...typeStyle(T.FIELD_ERROR_TYPE), color: theme.status.error_fg }}>
-                    {fieldError}
-                  </span>
-                )}
-              </SectionPanel>
-
-              <SectionPanel title="關聯">
-                {relationsView === undefined || relationsView.isEmpty ? (
-                  <EmptyState compact title="尚無關聯" description="這張工單目前沒有任何關聯。" />
-                ) : (
-                  <>
-                    {(relationsView.parents.length > 0 || relationsView.children.length > 0) && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: T.GROUP_STACK_GAP }}>
-                        <span style={{ ...typeStyle(T.PANEL_TITLE_TYPE), color: theme.text.tertiary }}>
-                          母子鏈
-                        </span>
-                        <RelationGroup title="上層" items={relationsView.parents} />
-                        <RelationGroup title="子工單" items={relationsView.children} />
-                      </div>
-                    )}
-                    {relationsView.otherGroups.map((group) => (
-                      <RelationGroup key={group.relationTypeId} title={group.typeName} items={group.items} />
-                    ))}
-                  </>
-                )}
-              </SectionPanel>
-            </div>
-
-            <SectionPanel title="異動歷史">
-              {data.changeLog.length === 0 ? (
-                <EmptyState compact title="尚無異動記錄" description="這張工單目前沒有任何欄位異動。" />
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {data.changeLog.map((entry) => (
-                    <ChangeLogRow
-                      key={entry.id}
-                      entry={entry}
-                      fieldLabel={fieldLabelByName.get(entry.fieldName) ?? entry.fieldName}
-                    />
-                  ))}
-                </div>
-              )}
-            </SectionPanel>
-          </>
-        ) : null}
+  const title = asString(fieldValueByName.get('title'));
+  const titleDef = singleFieldDefs.find(def => def.name === 'title');
+  const statusDef = singleFieldDefs.find(def => def.name === 'status');
+  const remainingFields = singleFieldDefs.filter(def => !['title', 'status'].includes(def.name));
+  return <div className="issue-detail" style={{ width: '100%', minHeight: '100%', containerType: 'inline-size', background: theme.bg.surface, color: theme.text.primary, fontFamily: FONT_FAMILY.base }}>
+    <style>{`
+      .issue-content { max-width: ${T.CONTENT_MAX_WIDTH}px; margin: 0 auto; padding: ${T.PAGE_PADDING_Y}px ${T.PAGE_PADDING_X}px; box-sizing: border-box; }
+      .issue-body { display: grid; grid-template-columns: ${T.DETAIL_COLUMNS}; gap: ${T.CONTENT_GAP}px; align-items: start; }
+      .issue-properties { grid-column: 2; grid-row: 1; min-width: 0; }
+      .issue-main { grid-column: 1; grid-row: 1; min-width: 0; }
+      .issue-editable:hover, .issue-editable:focus-visible { background: ${theme.bg.surface_hover} !important; }
+      .issue-editable:focus-visible { outline: 2px solid ${theme.state.focus.ring}; outline-offset: 2px; }
+      .issue-edit-hint { opacity: 0; }
+      .issue-editable:hover .issue-edit-hint, .issue-editable:focus-visible .issue-edit-hint { opacity: 1; }
+      .issue-detail summary { cursor: pointer; color: ${theme.primary.main}; padding: ${SPACING.sm}px 0; font-size: ${TYPE_STYLES.bodySm.size}px; }
+      .issue-detail summary:focus-visible { outline: 2px solid ${theme.state.focus.ring}; }
+      @container (max-width: ${T.RESPONSIVE_WIDTH}px) {
+        .issue-content { padding: ${T.MOBILE_PADDING}px; }
+        .issue-body { display: flex; flex-direction: column; gap: 0; }
+        .issue-properties, .issue-main { width: 100%; }
+        .issue-edit-hint { opacity: 1; }
+      }
+    `}</style>
+    <div className="issue-content">
+      <div style={{ display: 'flex', alignItems: 'center', gap: T.HEADER_GAP, color: theme.text.secondary, ...typeStyle(TYPE_STYLES.bodySm) }}>
+        <Button variant="ghost" label="← 返回" onClick={() => navigate(-1)} /><span aria-hidden="true">/</span><span style={{ fontFamily: FONT_FAMILY.mono }}>{data?.issue.issueKey ?? '工單詳情'}</span>
       </div>
+      {error !== undefined ? <EmptyState icon="clock" title="載入工單失敗" description={error} action={{ label: '重試', onClick: () => void reload() }} /> : loading && data === undefined ? <p role="status">載入中…</p> : data !== undefined ? <>
+        <h1 style={{ ...typeStyle(T.TITLE_TYPE), margin: `${SPACING.xl}px 0 ${SPACING.md}px`, overflowWrap: 'anywhere' }}>
+          {titleDef && !titleDef.readonly && data.context.canEdit ? <EditableTextField heading label={titleDef.label} value={title} disabled={pendingField !== null} onCancel={() => setFieldError(undefined)} onCommit={text => commitTextField('title', text)} /> : title || data.issue.issueKey}
+        </h1>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: SPACING.md, marginBottom: SPACING['2xl'] }}>
+          {statusDef && <div style={{ minWidth: 0 }}>{renderFieldValue(statusDef)}</div>}
+          {!data.context.canEdit && <span style={{ ...typeStyle(TYPE_STYLES.bodySm), color: theme.text.secondary }}>唯讀工單</span>}
+        </div>
+        {fieldError && <p role="alert" style={{ ...typeStyle(TYPE_STYLES.bodySm), color: theme.status.error_fg }}>{fieldError}</p>}
+        <div className="issue-body">
+          <aside className="issue-properties">
+            <SectionPanel title="工單資訊">
+              {remainingFields.map(def => <FieldRow key={def.name} label={def.label}>
+                {data.context.rollups.find(row => row.fieldName === def.name) ? <RollupField issueId={issueId} status={data.context.rollups.find(row => row.fieldName === def.name)!} value={fieldValueByName.get(def.name)} canEdit={data.context.canEdit} onSaved={reload}>{renderFieldValue(def)}</RollupField> : renderFieldValue(def)}
+              </FieldRow>)}
+            </SectionPanel>
+            <WorkLogPanel issueId={issueId} context={data.context} onSaved={reload} />
+          </aside>
+          <div className="issue-main">
+            <SectionPanel title="關聯工單">
+              {relationsView === undefined || relationsView.isEmpty ? <span style={{ ...typeStyle(TYPE_STYLES.bodySm), color: theme.text.secondary }}>尚無關聯工單。</span> : <>
+                <RelationGroup title="上層工單" items={relationsView.parents} onRemove={removeRelation} onOpen={id => navigate(`/issues/${id}`)} />
+                <RelationGroup title="子工單" items={relationsView.children} onRemove={removeRelation} onOpen={id => navigate(`/issues/${id}`)} />
+                {relationsView.otherGroups.map(group => <RelationGroup key={group.relationTypeId} title={relationLabel(group.typeName)} items={group.items} onRemove={removeRelation} onOpen={id => navigate(`/issues/${id}`)} />)}
+              </>}
+              {data.context.canEdit && <details><summary>新增關聯</summary><RelationForm issueId={issueId} types={data.relationTypes} onSaved={reload} /></details>}
+            </SectionPanel>
+            <SectionPanel title="異動歷史">
+              {data.changeLog.length === 0 ? <span style={{ ...typeStyle(TYPE_STYLES.bodySm), color: theme.text.secondary }}>尚無異動記錄。</span> : <div>{data.changeLog.map(entry => <ChangeLogRow key={entry.id} entry={entry} actorLabel={personLabel(entry.actor, account)} fieldLabel={fieldLabelByName.get(entry.fieldName) ?? entry.fieldName} />)}</div>}
+            </SectionPanel>
+          </div>
+        </div>
+      </> : null}
     </div>
-  );
+  </div>;
 }

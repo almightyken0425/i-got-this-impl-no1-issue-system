@@ -46,14 +46,14 @@ function isRollupRelation(snapshot: RollupSnapshot, relationTypeId: string): boo
  * 只沿彙總開關為真的關聯型別收集，收集範圍限本快照的 Company 租戶。
  */
 export function findSubordinateIds(snapshot: RollupSnapshot, issueId: string): string[] {
-  return snapshot.relations
+  return [...new Set(snapshot.relations
     .filter(
       (rel) =>
         rel.fromIssueId === issueId &&
         rel.companyId === snapshot.companyId &&
         isRollupRelation(snapshot, rel.relationTypeId),
     )
-    .map((rel) => rel.toIssueId);
+    .map((rel) => rel.toIssueId))];
 }
 
 /**

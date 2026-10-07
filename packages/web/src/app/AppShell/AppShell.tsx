@@ -22,16 +22,15 @@
 //
 // 主題切換：ThemeProvider 在更上層（App.tsx），本檔只提供切換入口。
 
-import { NavLink, Outlet } from 'react-router';
-import { useCallback, useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation } from 'react-router';
+import { useEffect, useState } from 'react';
 
-import { accountsApi, calendarsApi } from '../../api';
+import { accountsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { Button, Select } from '../../components/controls';
-import { useAsync } from '../../hooks/useAsync';
+import { useCalendars } from '../../hooks/useCalendars';
 import {
   BORDER_WIDTH,
-  CONTROL_HEIGHT,
   FONT_FAMILY,
   MOTION,
   RADIUS,
@@ -46,9 +45,9 @@ import { NAV_ITEMS } from '../routes';
 import { AddViewForm } from './AddViewForm';
 
 const SHELL_TOKENS = {
-  SIDEBAR_WIDTH: SPACING['3xl'] * 5, // 200
-  SIDEBAR_PADDING: SPACING.md,
-  SIDEBAR_GAP: SPACING.lg,
+  SIDEBAR_WIDTH: SPACING['4xl'] * 4 + SPACING.lg,
+  SIDEBAR_PADDING: SPACING.lg,
+  SIDEBAR_GAP: SPACING.xl,
   SIDEBAR_BORDER_WIDTH: BORDER_WIDTH.hairline,
 
   BRAND_TYPE: TYPE_STYLES.sectionTitle,
@@ -59,11 +58,11 @@ const SHELL_TOKENS = {
 
   NAV_GAP: SPACING['2xs'],
   NAV_GROUP_TYPE: TYPE_STYLES.overline,
-  NAV_ITEM_HEIGHT: CONTROL_HEIGHT.lg, // 32
+  NAV_ITEM_HEIGHT: SPACING['3xl'],
   NAV_ITEM_PADDING_X: SPACING.sm,
   NAV_ITEM_GAP: SPACING.sm,
   NAV_ITEM_RADIUS: RADIUS.sm,
-  NAV_ITEM_TYPE: TYPE_STYLES.bodySm,
+  NAV_ITEM_TYPE: TYPE_STYLES.body,
   /** 選取態的左側指示條，與表格選取列同一個語彙。 */
   NAV_ACCENT_WIDTH: BORDER_WIDTH.focus,
   NAV_ACCENT_HEIGHT: SPACING.lg, // 16
@@ -189,7 +188,7 @@ function AccountCalendarSelect() {
     void accountsApi.getMyDefaultCalendar().then((value) => setDefaultCalendar(value ?? undefined));
   }, []);
 
-  const calendars = useAsync(useCallback(() => calendarsApi.listCalendars(), []));
+  const calendars = useCalendars();
 
   const onChange = (value: string) => {
     const previous = defaultCalendar;
@@ -213,9 +212,12 @@ function AccountCalendarSelect() {
 function AppShellInner() {
   const { theme, themeId, toggleTheme } = useTheme();
   const { account, logout } = useAuth();
+  const location = useLocation();
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  useEffect(() => setNavigationOpen(false), [location.pathname]);
 
   return (
-    <div
+    <div className="app-shell"
       style={{
         display: 'flex',
         alignItems: 'stretch',
@@ -225,7 +227,26 @@ function AppShellInner() {
         fontFamily: FONT_FAMILY.base,
       }}
     >
-      <aside
+      <style>{`
+        .shell-mobile { display: none; }
+        .shell-navigation { box-sizing: border-box; }
+        @media (max-width: ${SPACING['4xl'] * 16}px) {
+          .app-shell { flex-direction: column; }
+          .shell-mobile { display: flex; justify-content: space-between; align-items: center; padding: ${SPACING.md}px ${SPACING.lg}px; background: ${theme.bg.surface}; border-bottom: 1px solid ${theme.border.base}; }
+          .shell-navigation { display: none !important; }
+          .shell-navigation[data-open="true"] { display: flex !important; width: 100% !important; max-height: 65vh; border-bottom: 1px solid ${theme.border.base}; }
+          .shell-main { min-height: 0; }
+        }
+      `}</style>
+      <div className="shell-mobile">
+        <strong style={typeStyle(TYPE_STYLES.sectionTitle)}>IGotThis</strong>
+        <button type="button" aria-controls="shell-navigation" aria-expanded={navigationOpen}
+          onClick={() => setNavigationOpen(open => !open)}
+          style={{ background: 'transparent', color: theme.primary.main, border: 0, minHeight: SPACING['3xl'], padding: SPACING.sm, font: 'inherit', cursor: 'pointer' }}>
+          {navigationOpen ? '收合導覽 ×' : '導覽 ☰'}
+        </button>
+      </div>
+      <aside id="shell-navigation" className="shell-navigation" data-open={navigationOpen}
         style={{
           width: S.SIDEBAR_WIDTH,
           flexShrink: 0,
@@ -233,13 +254,13 @@ function AppShellInner() {
           flexDirection: 'column',
           gap: S.SIDEBAR_GAP,
           padding: S.SIDEBAR_PADDING,
-          background: theme.bg.surface,
+          background: theme.bg.base,
           borderRight: `${S.SIDEBAR_BORDER_WIDTH}px solid ${theme.border.base}`,
           overflowY: 'auto',
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: S.BRAND_GAP, minWidth: 0 }}>
-          <span style={{ ...typeStyle(S.BRAND_TYPE), color: theme.text.primary }}>IGotThis</span>
+          <span style={{ ...typeStyle(S.BRAND_TYPE), color: theme.primary.main }}>IGotThis<span aria-hidden="true"> ↗</span></span>
           <span style={{ ...typeStyle(S.BRAND_META_TYPE), color: theme.text.tertiary }}>
             工單系統
           </span>
@@ -283,7 +304,7 @@ function AppShellInner() {
         </div>
       </aside>
 
-      <main style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
+      <main className="shell-main" style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
         <Outlet />
       </main>
     </div>

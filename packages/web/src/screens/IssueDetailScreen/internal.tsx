@@ -1,14 +1,7 @@
-// IssueDetailScreen · 私有小元件
-//
-// 只服務 IssueDetailScreen，既有元件組無對應件（本畫面無 design git 來源，
-// 見 tokens.ts 開頭說明）。三塊：SectionPanel（區塊容器）／FieldRow 系列
-// （欄位區一列）／RelationGroup（關聯區一個分組）／ChangeLogRow（異動歷史
-// 一列）／StatusResolutionPrompt（Status 轉終止狀態的結案原因選擇）。
-
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { Button, IconButton, Select, TextInput } from '../../components/controls';
+import { Button, Select } from '../../components/controls';
 import type { SelectOption } from '../../components/controls';
 import {
   FONT_FAMILY,
@@ -24,7 +17,7 @@ const T = ISSUE_DETAIL_SCREEN_TOKENS;
 
 /** 任意欄位值 → 可讀文字；null/undefined/空字串統一顯示「(無)」。 */
 export function displayValue(value: unknown): string {
-  if (value === null || value === undefined || value === '') return '(無)';
+  if (value === null || value === undefined || value === '') return '未填寫';
   if (typeof value === 'number' || typeof value === 'string') return String(value);
   if (typeof value === 'boolean') return value ? '是' : '否';
   return JSON.stringify(value);
@@ -48,21 +41,21 @@ export interface SectionPanelProps {
 export function SectionPanel({ title, children }: SectionPanelProps) {
   const { theme } = useTheme();
   return (
-    <div
+    <section
+      aria-label={title}
       style={{
         display: 'flex',
         flexDirection: 'column',
         gap: T.PANEL_GAP,
         minWidth: 0,
-        padding: T.PANEL_PADDING,
+        padding: `${T.PANEL_PADDING}px 0`,
         background: theme.bg.surface,
-        border: `${T.PANEL_BORDER_WIDTH}px solid ${theme.border.base}`,
-        borderRadius: T.PANEL_RADIUS,
+        borderTop: `${T.PANEL_BORDER_WIDTH}px solid ${theme.border.base}`,
       }}
     >
-      <span style={{ ...typeStyle(T.PANEL_TITLE_TYPE), color: theme.text.secondary }}>{title}</span>
+      <h2 style={{ ...typeStyle(T.PANEL_TITLE_TYPE), margin: 0, color: theme.text.primary }}>{title}</h2>
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -89,7 +82,7 @@ export function FieldRow({ label, children }: FieldRowProps) {
         style={{
           width: T.FIELD_LABEL_WIDTH,
           flexShrink: 0,
-          ...typeStyle(TYPE_STYLES.label),
+          ...typeStyle(TYPE_STYLES.bodySm),
           color: theme.text.secondary,
         }}
       >
@@ -112,9 +105,7 @@ export function ReadOnlyValue({ text }: { readonly text: string }) {
         ...typeStyle(T.FIELD_VALUE_TYPE),
         color: theme.text.primary,
         minWidth: 0,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
+        overflowWrap: 'anywhere',
       }}
     >
       {text}
@@ -132,40 +123,63 @@ export function ReadOnlyValue({ text }: { readonly text: string }) {
 
 export interface EditableTextFieldProps {
   readonly value: string;
+  readonly label?: string;
   readonly placeholder?: string;
   readonly disabled?: boolean;
-  readonly onCommit: (next: string) => void;
+  readonly heading?: boolean;
+  readonly onCancel?: () => void;
+  readonly onCommit: (next: string) => void | boolean | Promise<void | boolean>;
 }
 
-export function EditableTextField({ value, placeholder, disabled = false, onCommit }: EditableTextFieldProps) {
+export function EditableTextField({ value, label = '欄位', placeholder, disabled = false, heading = false, onCancel, onCommit }: EditableTextFieldProps) {
+  const { theme } = useTheme();
   const [draft, setDraft] = useState(value);
-  // 外部值變動（如 reload 拿到新資料）時重置草稿，避免殘留上一版未提交的字。
-  useEffect(() => setDraft(value), [value]);
-
-  const dirty = draft !== value;
-  const commit = () => {
-    if (!dirty || disabled) return;
-    onCommit(draft);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const savingRef = useRef(false);
+  useEffect(() => { if (!editing) setDraft(value); }, [value, editing]);
+  useEffect(() => { if (editing) input.current?.focus(); }, [editing]);
+  const close = () => { setEditing(false); requestAnimationFrame(() => trigger.current?.focus()); };
+  const cancel = () => { if (savingRef.current) return; setDraft(value); onCancel?.(); close(); };
+  const commit = async () => {
+    if (disabled || savingRef.current) return;
+    if (draft === value) { close(); return; }
+    savingRef.current = true;
+    setSaving(true);
+    try { if (await onCommit(draft) !== false) close(); }
+    finally { savingRef.current = false; setSaving(false); }
   };
-
-  return (
-    <div
-      style={{ display: 'flex', alignItems: 'center', gap: T.FIELD_CONFIRM_GAP, flex: 1, minWidth: 0 }}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') commit();
-      }}
-    >
-      <TextInput
-        value={draft}
-        disabled={disabled}
-        onChange={setDraft}
-        fullWidth
-        style={{ flex: 1 }}
-        {...(placeholder === undefined ? {} : { placeholder })}
-      />
-      {dirty && !disabled && <IconButton icon="check" title="儲存" size="sm" onClick={commit} />}
+  if (!editing) return <button ref={trigger} type="button" className="issue-editable" aria-label={`編輯${label}：${value || '未填寫'}`} disabled={disabled}
+    onClick={() => { setDraft(value); setEditing(true); }}
+    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.GROUP_GAP, width: '100%', minWidth: 0, minHeight: T.EDIT_HEIGHT,
+      padding: 0, border: 0, borderRadius: T.PANEL_RADIUS, background: 'transparent', color: value ? theme.text.primary : theme.text.tertiary,
+      fontFamily: FONT_FAMILY.base, ...typeStyle(heading ? T.TITLE_TYPE : T.FIELD_VALUE_TYPE), textAlign: 'left', cursor: disabled ? 'default' : 'pointer' }}>
+    <span style={{ overflowWrap: 'anywhere', minWidth: 0 }}>{value || '未填寫'}</span>
+    <span className="issue-edit-hint" aria-hidden="true" style={{ ...typeStyle(TYPE_STYLES.label), color: theme.text.tertiary, flexShrink: 0 }}>編輯</span>
+  </button>;
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: T.GROUP_GAP, flex: 1, minWidth: 0 }}>
+    <input ref={input} aria-label={label} value={draft} disabled={saving || disabled} placeholder={placeholder}
+      onChange={event => setDraft(event.target.value)}
+      onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === 'Enter') { event.preventDefault(); void commit(); } if (event.key === 'Escape') { event.preventDefault(); cancel(); } }}
+      style={{ width: '100%', minWidth: 0, minHeight: T.EDIT_HEIGHT, boxSizing: 'border-box', padding: T.GROUP_GAP, border: `1px solid ${theme.border.input}`, borderRadius: T.PANEL_RADIUS,
+        fontFamily: FONT_FAMILY.base, ...typeStyle(T.FIELD_VALUE_TYPE), color: theme.text.primary, background: theme.bg.surface }} />
+    <div style={{ display: 'flex', gap: T.GROUP_GAP }}>
+      <Button size="sm" label={saving ? '儲存中…' : '儲存'} disabled={saving || disabled} onClick={() => void commit()} />
+      <Button size="sm" variant="ghost" label="取消" disabled={saving} onClick={cancel} />
     </div>
-  );
+  </div>;
+}
+
+/** 姓名不可得時保留可區分的短編號，完整編號由 title 提供。 */
+export function personLabel(id: string, account?: { id: string; name: string } | null): string {
+  if (account?.id === id) return account.name;
+  return /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(id) ? `成員 ${id.slice(0, 8)}` : id;
+}
+
+export function relationLabel(name: string): string {
+  return ({ Children: '子工單', parent_child: '父子關聯', Before: '前置工單', RelatedTo: '相關工單', Container: '主題綁定' } as Record<string, string>)[name] ?? name;
 }
 
 // ─── RelationGroup · 關聯區一個分組 ──────────────────────────
@@ -174,23 +188,32 @@ export function EditableTextField({ value, placeholder, disabled = false, onComm
 export interface RelationGroupItem {
   readonly id: string;
   readonly key: string;
+  readonly relationId?: string;
+  readonly canRemove?: boolean;
+  readonly readable?: boolean;
+  readonly direction?: 'outgoing' | 'incoming';
 }
 
 export interface RelationGroupProps {
   readonly title: string;
   readonly items: readonly RelationGroupItem[];
+  readonly onRemove?: (id: string) => Promise<boolean>;
+  readonly onOpen?: (id: string) => void;
 }
 
-export function RelationGroup({ title, items }: RelationGroupProps) {
+export function RelationGroup({ title, items, onRemove, onOpen }: RelationGroupProps) {
   const { theme } = useTheme();
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   if (items.length === 0) return null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: T.GROUP_GAP, minWidth: 0 }}>
       <span style={{ ...typeStyle(T.GROUP_TITLE_TYPE), color: theme.text.tertiary }}>{title}</span>
       <div style={{ display: 'flex', flexDirection: 'column', gap: T.RELATION_ITEM_GAP }}>
         {items.map((item) => (
+          <div key={item.relationId ?? item.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: T.GROUP_GAP }}>
+          {item.direction && <span style={{ ...typeStyle(TYPE_STYLES.label), color: theme.text.secondary }}>{item.direction === 'outgoing' ? '連至 →' : '來自 ←'}</span>}
           <span
-            key={item.id}
             style={{
               ...typeStyle(T.RELATION_ITEM_TYPE),
               fontFamily: FONT_FAMILY.mono,
@@ -201,8 +224,16 @@ export function RelationGroup({ title, items }: RelationGroupProps) {
               whiteSpace: 'nowrap',
             }}
           >
-            {item.key}
+            {item.readable && onOpen ? <Button variant="ghost" size="sm" label={item.key} onClick={() => onOpen(item.id)} /> : `${item.key}${item.readable === false ? ' · 無讀取權' : ''}`}
           </span>
+          {item.canRemove && item.relationId && onRemove && <Button variant="ghost" size="sm" disabled={busy}
+            label={confirmId === item.relationId ? '確認移除' : '移除'} onClick={() => {
+              if (confirmId !== item.relationId) { setConfirmId(item.relationId!); return; }
+              setBusy(true);
+              void onRemove(item.relationId!).then(ok => { if (ok) setConfirmId(null); }).finally(() => setBusy(false));
+            }} />}
+          {confirmId === item.relationId && <Button variant="ghost" size="sm" label="取消" disabled={busy} onClick={() => setConfirmId(null)} />}
+          </div>
         ))}
       </div>
     </div>
@@ -210,9 +241,10 @@ export function RelationGroup({ title, items }: RelationGroupProps) {
 }
 
 // ─── ChangeLogRow · 異動歷史一列 ─────────────────────────────
-// 時間 / 欄位標籤 / 舊值→新值 / 執行者，逐欄定寬對齊，對齊 Spec 線框圖排法。
+// 依執行者、欄位、變更內容、時間排列，窄版不固定四欄。
 
 export interface ChangeLogRowEntry {
+  readonly restricted?: boolean;
   readonly id: string;
   readonly fieldName: string;
   readonly oldValue: unknown;
@@ -226,57 +258,16 @@ export interface ChangeLogRowProps {
   readonly fieldLabel: string;
 }
 
-export function ChangeLogRow({ entry, fieldLabel }: ChangeLogRowProps) {
+export function ChangeLogRow({ entry, fieldLabel, actorLabel }: ChangeLogRowProps & { actorLabel?: string }) {
   const { theme } = useTheme();
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'baseline',
-        gap: T.CHANGELOG_ROW_GAP,
-        padding: `${T.CHANGELOG_ROW_PADDING_Y}px 0`,
-        borderTop: `1px solid ${theme.divider.base}`,
-      }}
-    >
-      <span
-        style={{
-          width: T.CHANGELOG_TIME_WIDTH,
-          flexShrink: 0,
-          ...typeStyle(T.CHANGELOG_META_TYPE),
-          color: theme.text.tertiary,
-          fontVariantNumeric: NUMERIC_FONT_VARIANT,
-        }}
-      >
-        {formatChangeLogTime(entry.time)}
-      </span>
-      <span
-        style={{
-          width: T.CHANGELOG_FIELD_WIDTH,
-          flexShrink: 0,
-          ...typeStyle(T.CHANGELOG_TYPE),
-          color: theme.text.secondary,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {fieldLabel}
-      </span>
-      <span style={{ flex: 1, minWidth: 0, ...typeStyle(T.CHANGELOG_TYPE), color: theme.text.primary }}>
-        {`${displayValue(entry.oldValue)} → ${displayValue(entry.newValue)}`}
-      </span>
-      <span
-        style={{
-          flexShrink: 0,
-          ...typeStyle(T.CHANGELOG_META_TYPE),
-          color: theme.text.tertiary,
-          fontFamily: FONT_FAMILY.mono,
-        }}
-      >
-        {entry.actor}
-      </span>
+  return <div style={{ display: 'flex', gap: T.GROUP_GAP, padding: `${T.CHANGELOG_ROW_PADDING_Y}px 0`, borderBottom: `1px solid ${theme.divider.base}` }}>
+    <span aria-hidden="true" style={{ color: theme.primary.main }}>•</span>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ ...typeStyle(T.CHANGELOG_TYPE), color: theme.text.secondary, overflowWrap: 'anywhere' }}><strong title={entry.actor} style={{ color: theme.text.primary }}>{actorLabel ?? personLabel(entry.actor)}</strong> 更新了 {fieldLabel}</div>
+      <div style={{ ...typeStyle(T.CHANGELOG_TYPE), color: theme.text.primary, marginTop: T.FIELD_CONFIRM_GAP, overflowWrap: 'anywhere' }}>{entry.restricted ? '彙總來源權限不足' : `${displayValue(entry.oldValue)} → ${displayValue(entry.newValue)}`}</div>
+      <time dateTime={new Date(entry.time).toISOString()} style={{ display: 'block', ...typeStyle(T.CHANGELOG_META_TYPE), color: theme.text.tertiary, marginTop: T.FIELD_CONFIRM_GAP }}>{formatChangeLogTime(entry.time)}</time>
     </div>
-  );
+  </div>;
 }
 
 // ─── StatusResolutionPrompt · Status 轉終止狀態的結案原因選擇 ─

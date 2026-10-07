@@ -13,5 +13,5 @@ export function initializeRollupMode(
 ): RollupMode {
   requireRollupFn(snapshot, fieldName);
 
-  return findFieldValueRow(snapshot, issueId, fieldName) === undefined ? 'auto' : 'manual';
+  return findFieldValueRow(snapshot, issueId, fieldName)?.value == null ? 'auto' : 'manual';
 }

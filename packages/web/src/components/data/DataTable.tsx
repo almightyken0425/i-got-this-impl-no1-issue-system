@@ -37,7 +37,7 @@ import type { SortState, TableColumn, TableRow } from './types';
 const T = DATA_DISPLAY_TOKENS.TABLE;
 
 /** 分組欄位沒有值時的堆名。 */
-const UNGROUPED_LABEL = '未指定';
+const UNGROUPED_LABEL = '未填寫';
 
 export type RowPointerHandler = (row: TableRow, event: MouseEvent<HTMLDivElement>) => void;
 
@@ -107,6 +107,8 @@ export function DataTable(props: DataTableProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
 
+  // 窄版保留已設定欄寬，由表格自身橫向捲動，不裁切右側欄位。
+  const contentWidth = columns.reduce((sum, column) => sum + (typeof column.width === 'number' ? column.width : Number(column.width?.match(/(?:minmax\()?([0-9.]+)px/)?.[1] ?? T.COLUMN_MIN_WIDTH)), 0);
   const rowHeight = T.ROW_HEIGHT_BY_DENSITY[density];
   const template = columns
     .map((col) =>
@@ -257,7 +259,8 @@ export function DataTable(props: DataTableProps) {
         color: c.rowFg,
       }}
     >
-      <div style={{ maxHeight, overflow: maxHeight === undefined ? 'visible' : 'auto' }}>
+      <div tabIndex={0} aria-label="可左右捲動的表格" style={{ maxHeight, overflow: 'auto' }}>
+        <div style={{ minWidth: contentWidth }}>
         <div
           role="row"
           style={{
@@ -283,6 +286,7 @@ export function DataTable(props: DataTableProps) {
           ))}
         </div>
         {body}
+        </div>
       </div>
     </div>
   );

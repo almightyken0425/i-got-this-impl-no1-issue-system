@@ -6,10 +6,11 @@
 
 import { useCallback, useState } from 'react';
 
-import { ApiError, calendarsApi, containersApi } from '../../api';
+import { ApiError, containersApi } from '../../api';
 import { Button, Select, TextInput } from '../../components/controls';
 import { SPACING } from '../../theme';
 import { useAsync } from '../../hooks/useAsync';
+import { useCalendars } from '../../hooks/useCalendars';
 import { useCurrentView } from '../CurrentViewContext';
 
 interface AddViewFormProps {
@@ -41,7 +42,7 @@ export function AddViewForm({ onCancel, onCreated }: AddViewFormProps) {
       [productId],
     ),
   );
-  const calendars = useAsync(useCallback(() => calendarsApi.listCalendars(), []));
+  const calendars = useCalendars();
 
   // 換上層選擇時，下層選擇失效——比照容器樹「僅屬一個上層」的嚴格歸屬。
   const onTeamChange = (id: string) => {

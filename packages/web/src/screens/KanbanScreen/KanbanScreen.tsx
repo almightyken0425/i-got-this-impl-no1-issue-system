@@ -7,8 +7,7 @@
 // 對側 spec：no3_product_specs/no1_issue_system/no2_screens/no2_kanban_screen.md
 //
 // 資料來源：欄由 /api/views/kanban-columns 取回（工作區層級，非依檢視資料來源
-// 算——spec 定義該依檢視資料來源涉及的工單型別算，MVP 只有一種工單型別看不出
-// 差異，這輪不修正）；卡片依當前檢視（CurrentViewContext）查
+// 算，仍待縮到檢視範圍）；卡片依當前檢視（CurrentViewContext）查
 // /api/views/:id/workspace-issues 並依 status 欄位分欄；拖入他欄即 PATCH 該
 // 工單 status。拖進終止欄先跳結案原因選單，通過 changeIssueStatus 驗證才落地；
 // 非終止欄仍直接送出，若後端 422 則行內提示、卡片留在原欄。無當前檢視時顯示
@@ -22,8 +21,8 @@ import { useCallback, useMemo, useState } from 'react';
 import type { DragEvent } from 'react';
 import { useNavigate } from 'react-router';
 
-import { ApiError, viewsApi, workspaceApi } from '../../api';
-import type { WorkspaceContext, WorkspaceIssue } from '../../api';
+import { ApiError, workspaceApi } from '../../api';
+import type { View } from '../../api';
 import { useCurrentView } from '../../app/CurrentViewContext';
 import { Button, Chip, TextInput } from '../../components/controls';
 import { EmptyState, FilterNotice, KanbanCard, KanbanColumn } from '../../components/data';
@@ -32,6 +31,8 @@ import { Toolbar } from '../../components/gantt';
 import { useAsync } from '../../hooks/useAsync';
 import { FONT_FAMILY, useTheme } from '../../theme';
 import { typeStyle } from '../typeStyle';
+import { isTerminalStatus, loadKanbanData } from './data';
+import type { KanbanData, KanbanIssue } from './data';
 import { KanbanDropSlot, KanbanResolutionPrompt } from './internal';
 import { KANBAN_SCREEN_TOKENS } from './tokens';
 
@@ -58,31 +59,19 @@ function dueDisplay(iso: string | null): DueDisplay | undefined {
   return { label };
 }
 
-interface KanbanData {
-  readonly context: WorkspaceContext;
-  readonly columns: readonly string[];
-  readonly issues: readonly WorkspaceIssue[];
-  readonly permissionExcludedCount: number;
+export function KanbanScreen() {
+  const { currentView } = useCurrentView();
+  // 換檢視時清掉拖曳與待結案操作，也不顯示上一檢視留下的卡片。
+  return <KanbanView key={currentView?.id ?? ''} currentView={currentView} />;
 }
 
-export function KanbanScreen() {
+function KanbanView({ currentView }: { readonly currentView: View | null }) {
   const { theme } = useTheme();
   const navigate = useNavigate();
-  const { currentView } = useCurrentView();
 
   const fetcher = useCallback(async (): Promise<KanbanData | null> => {
     if (currentView === null) return null;
-    const context = await workspaceApi.getWorkspace();
-    const [columns, workspaceIssues] = await Promise.all([
-      workspaceApi.getKanbanColumns(),
-      viewsApi.getWorkspaceIssues(currentView.id),
-    ]);
-    return {
-      context,
-      columns,
-      issues: workspaceIssues.issues,
-      permissionExcludedCount: workspaceIssues.permissionExcludedCount,
-    };
+    return loadKanbanData(currentView.id);
   }, [currentView]);
   const { data, loading, error, reload } = useAsync(fetcher);
 
@@ -91,18 +80,13 @@ export function KanbanScreen() {
   const [dropColumnId, setDropColumnId] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [resolutionPrompt, setResolutionPrompt] = useState<{
-    readonly issue: WorkspaceIssue;
+    readonly issue: KanbanIssue;
     readonly targetColumnId: string;
   } | null>(null);
   const [dropError, setDropError] = useState<string | undefined>(undefined);
 
   const columns = data?.columns ?? [];
   const issues = data?.issues ?? [];
-
-  const terminalSet = useMemo(
-    () => new Set((data?.context.statuses ?? []).filter((s) => s.isTerminal).map((s) => s.name)),
-    [data?.context.statuses],
-  );
 
   const visibleIssues = useMemo(() => {
     const term = search.trim().toLocaleLowerCase();
@@ -136,7 +120,7 @@ export function KanbanScreen() {
   );
 
   const applyStatusChange = useCallback(
-    async (issue: WorkspaceIssue, status: string, resolution?: string) => {
+    async (issue: KanbanIssue, status: string, resolution?: string) => {
       setPendingKey(issue.key);
       setDropError(undefined);
       try {
@@ -162,13 +146,13 @@ export function KanbanScreen() {
       if (issueKey === null) return;
       const issue = issues.find((i) => i.key === issueKey);
       if (issue === undefined || issue.status === columnId) return;
-      if (terminalSet.has(columnId)) {
+      if (isTerminalStatus(issue, columnId)) {
         setResolutionPrompt({ issue, targetColumnId: columnId });
         return;
       }
       await applyStatusChange(issue, columnId);
     },
-    [draggingKey, endDrag, issues, terminalSet, applyStatusChange],
+    [draggingKey, endDrag, issues, applyStatusChange],
   );
 
   const onResolutionConfirm = useCallback(
@@ -294,7 +278,7 @@ export function KanbanScreen() {
                         issueKey={issue.key}
                         title={issue.title}
                         assignee={issue.assignee === '' ? undefined : issue.assignee}
-                        due={terminalSet.has(issue.status) ? undefined : dueDisplay(issue.due)}
+                        due={isTerminalStatus(issue, issue.status) ? undefined : dueDisplay(issue.due)}
                         ghost={draggingKey === issue.key}
                         loading={pendingKey === issue.key}
                         draggable
@@ -307,9 +291,10 @@ export function KanbanScreen() {
                 </KanbanColumn>
                 {resolutionPrompt !== null && resolutionPrompt.targetColumnId === columnId && (
                   <KanbanResolutionPrompt
+                    key={`${resolutionPrompt.issue.id}:${columnId}`}
                     issue={resolutionPrompt.issue}
                     targetLabel={columnId}
-                    options={data?.context.resolutionOptions ?? []}
+                    options={resolutionPrompt.issue.workflow.resolutionOptions}
                     onCancel={onResolutionCancel}
                     onConfirm={onResolutionConfirm}
                   />

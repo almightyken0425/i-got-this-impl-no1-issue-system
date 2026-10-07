@@ -23,7 +23,7 @@ import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ApiError, fieldsApi, viewsApi, workspaceApi } from '../../api';
-import type { CreateIssueInput, WorkspaceContext, WorkspaceIssue } from '../../api';
+import type { CreateIssueInput, FieldDef, WorkspaceContext, WorkspaceIssue } from '../../api';
 import { useCurrentView } from '../../app/CurrentViewContext';
 import { Button, Checkbox, Chip, IconButton, Select, TextInput } from '../../components/controls';
 import type { SelectOption } from '../../components/controls';
@@ -32,7 +32,6 @@ import type {
   DueTone,
   SortState,
   StatusTone,
-  TableCellValue,
   TableColumn,
   TableRow,
 } from '../../components/data';
@@ -70,11 +69,10 @@ import {
   LIST_COLUMNS,
   LIST_DEFAULT_SORT,
   LIST_GROUP_NONE,
-  LIST_GROUP_OPTIONS,
-  LIST_SORT_OPTIONS,
 } from './fixtures';
 import type { ListFilterChip } from './fixtures';
 import { LIST_SCREEN_TOKENS } from './tokens';
+import { buildFieldColumns, fieldCells, sortFieldRows } from './dynamicFields';
 
 const T = LIST_SCREEN_TOKENS;
 // 欄寬調整下限：沿用 DataTable 未指定欄寬時的同一個下界，兩者語意上是同一件事
@@ -147,7 +145,7 @@ function dueCell(iso: string | null): DueCell | null {
 }
 
 /** 把 API 工單摺成表格列。 */
-function toTableRow(issue: WorkspaceIssue, statusMeta: ReadonlyMap<string, StatusMeta>): TableRow {
+function toTableRow(issue: WorkspaceIssue, statusMeta: ReadonlyMap<string, StatusMeta>, fieldDefs: readonly FieldDef[]): TableRow {
   const meta = statusMeta.get(issue.status);
   const status: StatusCell = {
     label: issue.status,
@@ -157,46 +155,16 @@ function toTableRow(issue: WorkspaceIssue, statusMeta: ReadonlyMap<string, Statu
   return {
     id: issue.id,
     cells: {
+      ...fieldCells(issue.fields ?? {}, fieldDefs),
       key: issue.key,
       title: issue.title,
       status,
       assignee: issue.assignee,
       point: issue.point,
       due: dueCell(issue.due),
+      ...Object.fromEntries((issue.restrictedFields ?? []).map(name => [name, '來源權限不足'])),
     },
   };
-}
-
-// ─── 排序 ────────────────────────────────────────────────────
-
-function sortValue(raw: TableCellValue | undefined): number | string | null {
-  if (raw === null || raw === undefined || raw === '') return null;
-  if (typeof raw === 'number' || typeof raw === 'string') return raw;
-  if (typeof raw !== 'object') return null;
-  const record = raw as unknown as Record<string, unknown>;
-  const key = record['sortKey'];
-  if (typeof key === 'number' || typeof key === 'string') return key;
-  const label = record['label'];
-  return typeof label === 'string' ? label : null;
-}
-
-function compare(a: number | string, b: number | string): number {
-  if (typeof a === 'number' && typeof b === 'number') return a - b;
-  return String(a).localeCompare(String(b), 'zh-Hant');
-}
-
-/** 空值不隨升降序翻面：未指派、無到期日永遠沉在最後。 */
-function sortRows(rows: readonly TableRow[], sort: SortState | null): readonly TableRow[] {
-  if (sort === null) return rows;
-  const dir = sort.direction === 'desc' ? -1 : 1;
-  return rows.slice().sort((ra, rb) => {
-    const va = sortValue(ra.cells[sort.key]);
-    const vb = sortValue(rb.cells[sort.key]);
-    if (va === null && vb === null) return 0;
-    if (va === null) return 1;
-    if (vb === null) return -1;
-    return compare(va, vb) * dir;
-  });
 }
 
 // ─── ViewTitle ───────────────────────────────────────────────
@@ -578,6 +546,10 @@ export function ListScreen() {
   const { theme } = useTheme();
   const navigate = useNavigate();
   const { currentView, updateView } = useCurrentView();
+  const fieldDefsFetcher = useCallback(() => fieldsApi.listFieldDefs(), []);
+  const { data: fieldDefs, loading: fieldDefsLoading } = useAsync(fieldDefsFetcher);
+  const catalog = useMemo(() => buildFieldColumns(fieldDefs ?? []), [fieldDefs]);
+  const sortOptions = useMemo(() => catalog.map(column => ({ value: column.key, label: column.label })), [catalog]);
 
   const fetcher = useCallback(
     async (): Promise<
@@ -616,7 +588,7 @@ export function ListScreen() {
   // 欄位顯示設定草稿：初始值與切換檢視時都由 currentView.columnConfig 解析；
   // 每次互動立即反映在畫面上（樂觀更新），同時觸發 persistColumnConfig 寫回。
   const [columnConfigDraft, setColumnConfigDraft] = useState<readonly ColumnConfigEntry[]>(() =>
-    parseColumnConfig(currentView?.columnConfig, LIST_COLUMNS),
+    parseColumnConfig(currentView?.columnConfig, catalog),
   );
   const [saveError, setSaveError] = useState<string | undefined>(undefined);
   const [columnPanelOpen, setColumnPanelOpen] = useState(false);
@@ -627,11 +599,11 @@ export function ListScreen() {
   const columnPanelAnchor = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    setColumnConfigDraft(parseColumnConfig(currentView?.columnConfig, LIST_COLUMNS));
+    setColumnConfigDraft(parseColumnConfig(currentView?.columnConfig, catalog));
     setSaveError(undefined);
     setCreateOpen(false);
     setCreateError(undefined);
-  }, [currentView?.id]);
+  }, [currentView?.id, catalog]);
 
   useEffect(() => {
     if (!columnPanelOpen) return undefined;
@@ -654,8 +626,6 @@ export function ListScreen() {
   const filterRowSeq = useRef(0);
   const filterPanelAnchor = useRef<HTMLDivElement | null>(null);
 
-  const fieldDefsFetcher = useCallback(() => fieldsApi.listFieldDefs(), []);
-  const { data: fieldDefs, loading: fieldDefsLoading } = useAsync(fieldDefsFetcher);
   const fieldOptions = useMemo(() => filterFieldOptions(fieldDefs ?? []), [fieldDefs]);
 
   useEffect(() => {
@@ -717,11 +687,11 @@ export function ListScreen() {
   );
 
   const allRows = useMemo<readonly TableRow[]>(
-    () => (data?.issues ?? []).map((issue) => toTableRow(issue, statusMeta)),
-    [data?.issues, statusMeta],
+    () => (data?.issues ?? []).map((issue) => toTableRow(issue, statusMeta, fieldDefs ?? [])),
+    [data?.issues, statusMeta, fieldDefs],
   );
 
-  const rows = useMemo(() => sortRows(allRows, sort), [allRows, sort]);
+  const rows = useMemo(() => sortFieldRows(allRows, sort), [allRows, sort]);
 
   const filterChips = useMemo(
     () => parseFilterChips(currentView?.filterConfig),
@@ -729,8 +699,8 @@ export function ListScreen() {
   );
 
   const columns = useMemo(
-    () => columnsFromConfig(columnConfigDraft, LIST_COLUMNS),
-    [columnConfigDraft],
+    () => columnsFromConfig(columnConfigDraft, catalog),
+    [columnConfigDraft, catalog],
   );
 
   // 樂觀更新：本地草稿立即反映，失敗只記錯誤不回滾——使用者已經看到變更生效，
@@ -754,12 +724,12 @@ export function ListScreen() {
   // 對同一次點擊多打一支重複的 PATCH。
   const toggleColumn = useCallback(
     (key: string) => {
-      const next = toggleColumnEntry(columnConfigDraft, key, LIST_COLUMNS);
+      const next = toggleColumnEntry(columnConfigDraft, key, catalog);
       if (next === columnConfigDraft) return;
       setColumnConfigDraft(next);
       void persistColumnConfig(next);
     },
-    [columnConfigDraft, persistColumnConfig],
+    [columnConfigDraft, persistColumnConfig, catalog],
   );
 
   const moveColumn = useCallback(
@@ -774,12 +744,12 @@ export function ListScreen() {
 
   const adjustColumnWidth = useCallback(
     (key: string, delta: number) => {
-      const next = resizeColumnEntry(columnConfigDraft, key, delta, LIST_COLUMNS, COLUMN_WIDTH_MIN);
+      const next = resizeColumnEntry(columnConfigDraft, key, delta, catalog, COLUMN_WIDTH_MIN);
       if (next === columnConfigDraft) return;
       setColumnConfigDraft(next);
       void persistColumnConfig(next);
     },
-    [columnConfigDraft, persistColumnConfig],
+    [columnConfigDraft, persistColumnConfig, catalog],
   );
 
   const onRowSelect = useCallback((row: TableRow) => {
@@ -856,11 +826,11 @@ export function ListScreen() {
       </div>
       <Select
         prefix="排序"
-        options={LIST_SORT_OPTIONS}
+        options={sortOptions}
         value={sort?.key ?? ''}
         onChange={(key) => setSort({ key, direction: 'asc' })}
       />
-      <Select prefix="分組" options={LIST_GROUP_OPTIONS} value={groupBy} onChange={setGroupBy} />
+      <Select prefix="分組" options={[{ value: LIST_GROUP_NONE, label: '不分組' }, ...sortOptions]} value={groupBy} onChange={setGroupBy} />
       <div ref={columnPanelAnchor} style={{ position: 'relative', display: 'inline-flex' }}>
         <IconButton
           icon="columns"
@@ -872,7 +842,7 @@ export function ListScreen() {
         {columnPanelOpen && (
           <ColumnConfigPanel
             theme={theme}
-            catalog={LIST_COLUMNS}
+            catalog={catalog}
             entries={columnConfigDraft}
             widthStep={T.COLUMN_PANEL_WIDTH_STEP}
             widthMin={COLUMN_WIDTH_MIN}

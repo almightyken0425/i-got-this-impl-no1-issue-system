@@ -6,9 +6,13 @@ import type { Pool } from 'pg';
 import { currentIdentity } from '../../auth/middleware.js';
 import { withTransaction } from '../../db/client.js';
 import { containerRepo, fieldRepo, issueRepo } from '../../db/repositories/index.js';
-import { formatIssueKey, recordFieldChange } from '../../domain/index.js';
-import type { FieldChangeInput, RollupMode } from '../../domain/index.js';
+import { formatIssueKey } from '../../domain/index.js';
+import type { RollupMode } from '../../domain/index.js';
+import { refreshRollups, writeField } from '../../db/repositories/rollupRepo.js';
 import { isForeignKeyViolation, sendError } from '../errors.js';
+import { makeIssueAccessGuard, requireIssueAccess } from '../issueAccess.js';
+import { installIssueContextRoutes } from './issueContext.js';
+import { createIssueReadProjection } from '../issueReadProjection.js';
 import {
   WORKSPACE_FIELD_RESOLUTION as FIELD_RESOLUTION,
   WORKSPACE_FIELD_STATUS as FIELD_STATUS,
@@ -57,6 +61,16 @@ export const issueRoutes: FastifyPluginAsync<IssueRoutesOptions> = async (
   const { pool, requireAuth } = opts;
 
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', makeIssueAccessGuard(pool));
+  installIssueContextRoutes(app, pool);
+
+  app.get<{ Params: { issueKey: string } }>('/issues/by-key/:issueKey', async (request, reply) => {
+    const identity = currentIdentity(request);
+    const issue = await issueRepo.getIssueByKey(identity.companyId, request.params.issueKey, pool);
+    if (!issue) return sendError(reply, 404, 'NOT_FOUND', '工單編號不存在');
+    if (!(await requireIssueAccess(pool, identity, issue.id, 'read', reply))) return;
+    return { issue };
+  });
 
   // ==========================================================
   // Issues
@@ -77,7 +91,7 @@ export const issueRoutes: FastifyPluginAsync<IssueRoutesOptions> = async (
       },
     },
     async (request, reply) => {
-      const { companyId } = currentIdentity(request);
+      const { companyId, accountId } = currentIdentity(request);
       const { issueSetId } = request.params;
       const { issueTypeId } = request.body;
 
@@ -98,6 +112,7 @@ export const issueRoutes: FastifyPluginAsync<IssueRoutesOptions> = async (
           { id: randomUUID(), companyId, issueSetId, issueTypeId, issueKey },
           tx,
         );
+        await issueRepo.recordCreator(companyId, issue.id, accountId, tx);
         return { kind: 'ok' as const, issue };
       }, pool);
 
@@ -181,8 +196,13 @@ export const issueRoutes: FastifyPluginAsync<IssueRoutesOptions> = async (
     '/issues/:issueId',
     { schema: { params: idParams('issueId') } },
     async (request, reply) => {
-      const { companyId } = currentIdentity(request);
-      const removed = await issueRepo.deleteIssue(companyId, request.params.issueId, pool);
+      const { companyId, accountId } = currentIdentity(request);
+      const removed = await withTransaction(async (tx) => {
+        await containerRepo.lockCompanyForUpdate(companyId, tx);
+        const result = await issueRepo.deleteIssue(companyId, request.params.issueId, tx);
+        if (result) await refreshRollups(tx, companyId, accountId);
+        return result;
+      }, pool);
       if (!removed) {
         return sendError(reply, 404, 'NOT_FOUND', '工單不存在');
       }
@@ -207,7 +227,10 @@ export const issueRoutes: FastifyPluginAsync<IssueRoutesOptions> = async (
         return sendError(reply, 404, 'NOT_FOUND', '工單不存在');
       }
       const fieldValues = await issueRepo.listFieldValues(companyId, request.params.issueId, pool);
-      return reply.status(200).send({ fieldValues });
+      const projection = await createIssueReadProjection(pool, currentIdentity(request));
+      const visible = fieldValues.filter((row) => projection.inRecipe(row.issueId, row.fieldName)).map((row) =>
+        projection.restrictedField(row.issueId, row.fieldName) ? { ...row, value: null, restricted: true } : row);
+      return reply.status(200).send({ fieldValues: visible });
     },
   );
 
@@ -226,6 +249,13 @@ export const issueRoutes: FastifyPluginAsync<IssueRoutesOptions> = async (
         request.params.fieldName,
         pool,
       );
+      const projection = await createIssueReadProjection(pool, currentIdentity(request));
+      if (projection.restrictedField(request.params.issueId, request.params.fieldName)) {
+        return sendError(reply, 403, 'ROLLUP_SOURCE_FORBIDDEN', '彙總來源權限不足');
+      }
+      if (!projection.inRecipe(request.params.issueId, request.params.fieldName)) {
+        return sendError(reply, 404, 'NOT_FOUND', '欄位不在此型別配方內');
+      }
       if (fieldValue === undefined) {
         return sendError(reply, 404, 'NOT_FOUND', '欄位值不存在');
       }
@@ -270,34 +300,11 @@ export const issueRoutes: FastifyPluginAsync<IssueRoutesOptions> = async (
         );
       }
       try {
-        const fieldValue = await withTransaction(async (tx) => {
-          const existing = await issueRepo.getFieldValue(companyId, issueId, fieldName, tx);
-          const written = await issueRepo.setFieldValue(
-            {
-              companyId,
-              issueId,
-              fieldName,
-              value: request.body.value,
-              rollupMode: request.body.rollupMode ?? null,
-            },
-            tx,
-          );
-
-          const changes: FieldChangeInput[] = [
-            { fieldName, oldValue: existing?.value ?? null, newValue: request.body.value },
-          ];
-          const fieldDefs = await fieldRepo.listFieldDefs(companyId, tx);
-          const entries = recordFieldChange({ changes, actor: accountId, now: Date.now(), fieldDefs });
-          for (const entry of entries) {
-            await fieldRepo.appendChangeLog(
-              { id: randomUUID(), companyId, issueId, entry, authorId: accountId, createdOn: entry.time },
-              tx,
-            );
-          }
-
-          return written;
-        }, pool);
-        return reply.status(200).send({ fieldValue });
+        const fieldValue = await withTransaction((tx) => writeField(tx, companyId, issueId, fieldName,
+          request.body.value, accountId, request.body.rollupMode), pool);
+        const projection = await createIssueReadProjection(pool, currentIdentity(request));
+        return reply.status(200).send({ fieldValue: projection.restrictedField(issueId, fieldName)
+          ? { ...fieldValue, value: null, restricted: true } : fieldValue });
       } catch (error: unknown) {
         if (isForeignKeyViolation(error)) {
           return sendError(reply, 422, 'FIELD_NOT_DEFINED', '該欄位未在此 Company 定義');
@@ -311,17 +318,20 @@ export const issueRoutes: FastifyPluginAsync<IssueRoutesOptions> = async (
     '/issues/:issueId/fields/:fieldName',
     { schema: { params: fieldValueParams } },
     async (request, reply) => {
-      const { companyId } = currentIdentity(request);
+      const { companyId, accountId } = currentIdentity(request);
       const issue = await issueRepo.getIssue(companyId, request.params.issueId, pool);
       if (issue === undefined) {
         return sendError(reply, 404, 'NOT_FOUND', '工單不存在');
       }
-      const removed = await issueRepo.deleteFieldValue(
-        companyId,
-        request.params.issueId,
-        request.params.fieldName,
-        pool,
-      );
+      const removed = await withTransaction(async (tx) => {
+        const { issueId, fieldName } = request.params;
+        await containerRepo.lockCompanyForUpdate(companyId, tx);
+        if (await issueRepo.getFieldValue(companyId, issueId, fieldName, tx) === undefined) return false;
+        await writeField(tx, companyId, issueId, fieldName, null, accountId);
+        const def = await fieldRepo.findFieldDef(companyId, fieldName, tx);
+        if (!def?.rollupable) await issueRepo.deleteFieldValue(companyId, issueId, fieldName, tx);
+        return true;
+      }, pool);
       if (!removed) {
         return sendError(reply, 404, 'NOT_FOUND', '欄位值不存在');
       }
@@ -350,7 +360,12 @@ export const issueRoutes: FastifyPluginAsync<IssueRoutesOptions> = async (
         return sendError(reply, 404, 'NOT_FOUND', '工單不存在');
       }
       const records = await fieldRepo.listChangeLog(companyId, request.params.issueId, pool);
-      const changeLog = [...records].reverse();
+      const projection = await createIssueReadProjection(pool, currentIdentity(request));
+      const changeLog = [...records].reverse().map((record) => {
+        const entry = record.value as { fieldName: string; oldValue: unknown; newValue: unknown };
+        return projection.restrictedField(request.params.issueId, entry.fieldName)
+          ? { ...record, value: { ...entry, oldValue: null, newValue: null, restricted: true } } : record;
+      });
       return reply.status(200).send({ changeLog });
     },
   );

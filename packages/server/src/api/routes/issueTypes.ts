@@ -4,8 +4,10 @@ import type { FastifyInstance, FastifyPluginAsync, preHandlerHookHandler } from 
 import type { Pool } from 'pg';
 
 import { currentIdentity } from '../../auth/middleware.js';
+import { makeDefinitionAccessGuard } from '../issueAccess.js';
 import { withTransaction } from '../../db/client.js';
-import { fieldRepo, issueRepo } from '../../db/repositories/index.js';
+import { containerRepo, fieldRepo, issueRepo } from '../../db/repositories/index.js';
+import { refreshRollups } from '../../db/repositories/rollupRepo.js';
 import type { IssueTypeDefinition, WorkflowTransitionInput } from '../../db/repositories/index.js';
 import type { ResolutionOptionValue, WorkflowStateEdit } from '../../domain/index.js';
 import { validateWorkflowDefinitionEdit } from '../../domain/index.js';
@@ -135,6 +137,7 @@ export const issueTypeRoutes: FastifyPluginAsync<IssueTypeRoutesOptions> = async
   const { pool, requireAuth } = opts;
 
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', makeDefinitionAccessGuard(pool));
 
   // 建立工單型別；名稱在 Company 內唯一，fieldSets 逐一須存在。
   // 交易內建型別 + 帶入預設流程，兩步失敗則整批回滾。
@@ -191,7 +194,12 @@ export const issueTypeRoutes: FastifyPluginAsync<IssueTypeRoutesOptions> = async
       if (missing.length > 0) {
         return sendError(reply, 422, 'FIELD_SET_NOT_FOUND', `欄位組不存在：${missing.join('、')}`);
       }
-      const updated = await issueRepo.updateIssueType(companyId, request.params.id, request.body, pool);
+      const updated = await withTransaction(async (tx) => {
+        await containerRepo.lockCompanyForUpdate(companyId, tx);
+        const result = await issueRepo.updateIssueType(companyId, request.params.id, request.body, tx);
+        if (result) await refreshRollups(tx, companyId, currentIdentity(request).accountId);
+        return result;
+      }, pool);
       if (updated === undefined) {
         return sendError(reply, 404, 'ISSUE_TYPE_NOT_FOUND', '工單型別不存在');
       }

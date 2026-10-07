@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { authed, bootstrap, registerSession, testUrl, type Session } from './testHarness.js';
+import { authed, bootstrap, grantTypeAdminFixture, registerSession, testUrl, type Session } from './testHarness.js';
 
 // 工單型別路由整合測試：以 Fastify inject 打真路由連 igotthis_test。
 // 涵蓋建立（含預設流程一併初始化）、列出、更新、重複名稱與缺欄位組的錯誤碼。
@@ -27,6 +27,7 @@ suite('issue type routes', () => {
   beforeEach(async () => {
     await pool.query('TRUNCATE companies CASCADE');
     session = await registerSession(app);
+    await grantTypeAdminFixture(pool, session);
     call = authed(app, session.cookie);
   });
 

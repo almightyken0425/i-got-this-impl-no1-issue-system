@@ -23,7 +23,7 @@ export function Toolbar({ left, center, right, style }: ToolbarProps) {
   const { theme } = useTheme();
   const colors = resolveGanttColors(theme);
   const slot = (extra: CSSProperties): CSSProperties => ({
-    display: 'flex',
+    display: 'flex', flexWrap: 'wrap',
     alignItems: 'center',
     gap: GANTT_TOKENS.TOOLBAR_GAP,
     minWidth: 0,
@@ -34,11 +34,12 @@ export function Toolbar({ left, center, right, style }: ToolbarProps) {
     <div
       role="toolbar"
       style={{
-        display: 'flex',
+        display: 'flex', flexWrap: 'wrap',
         alignItems: 'center',
         gap: GANTT_TOKENS.TOOLBAR_GAP,
-        height: GANTT_TOKENS.TOOLBAR_HEIGHT,
-        padding: `0 ${GANTT_TOKENS.TOOLBAR_PADDING_H}px`,
+        minHeight: GANTT_TOKENS.TOOLBAR_HEIGHT,
+        boxSizing: 'border-box',
+        padding: `${GANTT_TOKENS.TOOLBAR_PADDING_Y}px ${GANTT_TOKENS.TOOLBAR_PADDING_H}px`,
         background: colors.rowBg,
         borderBottom: `${GANTT_TOKENS.GRID_LINE_WIDTH}px solid ${colors.sectionLine}`,
         fontFamily: FONT_FAMILY.base,
@@ -46,9 +47,9 @@ export function Toolbar({ left, center, right, style }: ToolbarProps) {
         ...style,
       }}
     >
-      <div style={slot({ flexShrink: 0 })}>{left}</div>
-      <div style={slot({ flex: 1, justifyContent: 'center', overflow: 'hidden' })}>{center}</div>
-      <div style={slot({ flexShrink: 0, justifyContent: 'flex-end' })}>{right}</div>
+      <div style={slot({ flex: '1 1 auto' })}>{left}</div>
+      {center && <div style={slot({ flex: 1, justifyContent: 'center', overflow: 'hidden' })}>{center}</div>}
+      {right && <div style={slot({ flex: '0 1 auto', justifyContent: 'flex-start' })}>{right}</div>}
     </div>
   );
 }

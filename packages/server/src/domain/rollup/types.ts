@@ -58,7 +58,7 @@ export interface IssueFieldValue {
   companyId: string;
   issueId: string;
   fieldName: string;
-  value: RollupFieldValue;
+  value: RollupFieldValue | null;
   rollupMode: RollupMode | null;
 }
 

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { authed, bootstrap, registerSession, testUrl, type Session } from './testHarness.js';
+import { authed, bootstrap, grantTypeAdminFixture, registerSession, testUrl, type Session } from './testHarness.js';
 
 // 欄位路由整合測試：以 Fastify inject 打真路由連 igotthis_test。
 // 涵蓋欄位組 CRUD、欄位定義 CRUD、重複名稱與缺欄位組的錯誤碼、可彙總欄位的 rollupFn 落地。
@@ -27,6 +27,7 @@ suite('field routes', () => {
   beforeEach(async () => {
     await pool.query('TRUNCATE companies CASCADE');
     session = await registerSession(app);
+    await grantTypeAdminFixture(pool, session);
     call = authed(app, session.cookie);
   });
 
@@ -36,6 +37,20 @@ suite('field routes', () => {
   }
 
   // ---- auth ----
+
+  it('彙總定義必須帶相容算法與原語', async () => {
+    await createSet('自訂');
+    for (const value of [
+      { valueType: 'number', rollupFn: null },
+      { valueType: 'text', rollupFn: 'sum' },
+      { valueType: 'date', rollupFn: 'sum' },
+    ]) {
+      const response = await call({ method: 'POST', url: '/api/fields/defs', payload: {
+        name: 'invalid', label: '錯誤彙總', fieldSetName: '自訂', kind: 'single', rollupable: true, ...value,
+      } });
+      expect(response.statusCode).toBe(422);
+    }
+  });
 
   it('未帶 cookie 存取欄位路由回 401', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/fields/sets' });

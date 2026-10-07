@@ -1,19 +1,17 @@
-// ISSUE_DETAIL_SCREEN_TOKENS · 工單詳情頁的 composition 參數
-//
-// 本畫面尚無對應 design git 來源檔——no5_issue_detail_screen 目前只有 Spec，
-// 尚未進 design 階段。值仍一律引用既有 atomic／component token 階梯組出，
-// 不落 hex、不落裸數字（版面比例等非階梯值標 literal 並附理由），對齊既有
-// ListScreen／KanbanScreen／DevOrderScreen 的 token 紀律，供 design 補檔時
-// 回頭核對、改吃 design 定案值。
-//
-// 只承載「本畫面怎麼組」的值；可重用的元件參數留在 theme 的 componentTokens。
-
-import { BORDER_WIDTH, CONTROL_HEIGHT, RADIUS, SPACING, TYPE_STYLES } from '../../theme';
+// 對齊 Design project/30_screens/no5_issue_detail_screen/tokens.jsx。
+import { BORDER_WIDTH, RADIUS, SPACING, TYPE_STYLES, TYPOGRAPHY } from '../../theme';
 
 export const ISSUE_DETAIL_SCREEN_TOKENS = {
-  PAGE_PADDING_X: SPACING.xl, // 24
-  PAGE_PADDING_Y: SPACING.lg, // 16
-  SECTION_GAP: SPACING.lg, // 16，欄位區/關聯區/異動歷史區之間
+  CONTENT_MAX_WIDTH: SPACING['4xl'] * 24,
+  RESPONSIVE_WIDTH: SPACING['4xl'] * 16,
+  TITLE_TYPE: { ...TYPE_STYLES.pageTitle, size: TYPOGRAPHY.size['3xl'], lineHeight: SPACING['2xl'] },
+  DETAIL_COLUMNS: 'minmax(0, 1fr) minmax(240px, 300px)',
+  CONTENT_GAP: SPACING['3xl'],
+  EDIT_HEIGHT: SPACING['3xl'],
+  MOBILE_PADDING: SPACING.lg,
+  PAGE_PADDING_X: SPACING['3xl'], // 24
+  PAGE_PADDING_Y: SPACING['2xl'], // 16
+  SECTION_GAP: SPACING['2xl'], // 16，欄位區/關聯區/異動歷史區之間
 
   HEADER_GAP: SPACING.sm,
   HEADER_KEY_TYPE: TYPE_STYLES.sectionTitle,
@@ -23,14 +21,14 @@ export const ISSUE_DETAIL_SCREEN_TOKENS = {
   BODY_GAP: SPACING.lg,
   BODY_MIN_WIDTH: SPACING['4xl'] * 6, // 288，並排欄位不擠壓到無法閱讀的下界
 
-  PANEL_PADDING: SPACING.lg,
-  PANEL_GAP: SPACING.md,
+  PANEL_PADDING: SPACING.xl,
+  PANEL_GAP: SPACING.lg,
   PANEL_RADIUS: RADIUS.lg,
   PANEL_BORDER_WIDTH: BORDER_WIDTH.hairline,
-  PANEL_TITLE_TYPE: TYPE_STYLES.overline,
+  PANEL_TITLE_TYPE: TYPE_STYLES.cardTitle,
 
   FIELD_ROW_GAP: SPACING.md,
-  FIELD_ROW_MIN_HEIGHT: CONTROL_HEIGHT.md, // 28，唯讀文字與編輯控件同高，切換不跳動
+  FIELD_ROW_MIN_HEIGHT: SPACING['3xl'], // 28，唯讀文字與編輯控件同高，切換不跳動
   FIELD_LABEL_WIDTH: SPACING['4xl'] * 2, // 96
   FIELD_VALUE_TYPE: TYPE_STYLES.body,
   FIELD_CONFIRM_GAP: SPACING.xs,
@@ -43,11 +41,11 @@ export const ISSUE_DETAIL_SCREEN_TOKENS = {
   RELATION_ITEM_GAP: SPACING.xs,
 
   CHANGELOG_ROW_GAP: SPACING.sm,
-  CHANGELOG_ROW_PADDING_Y: SPACING.xs,
+  CHANGELOG_ROW_PADDING_Y: SPACING.md,
   CHANGELOG_TIME_WIDTH: SPACING['4xl'] * 3, // 144，容得下 "2026-08-14 10:22"
   CHANGELOG_FIELD_WIDTH: SPACING['4xl'] * 2, // 96
   CHANGELOG_TYPE: TYPE_STYLES.bodySm,
-  CHANGELOG_META_TYPE: TYPE_STYLES.caption,
+  CHANGELOG_META_TYPE: TYPE_STYLES.label,
 
   PROMPT_GAP: SPACING.sm,
   PROMPT_PADDING: SPACING.md,

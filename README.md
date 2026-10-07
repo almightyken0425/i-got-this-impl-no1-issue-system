@@ -10,6 +10,8 @@
 
 ## 起步
 
+自架維護使用[安裝、升級、備份與還原指引](SELF_HOST.md)。交付建置請執行 `node scripts/self-host.mjs build`，此入口會連同 SQL migration 與版本資訊一起產生。
+
 - 環境需求
     - Node 22 以上
     - npm 10 以上
@@ -169,6 +171,8 @@
 
 ## 待接事項
 
+本次候選已接上工單權限、彙總自動更新、詳情模式與工時、關聯與日曆維護，以及自訂欄位的清單顯示、排序、分組與欄位設定保存。四週真實使用驗收仍需實際工單與合併紀錄，不能由整合測試代替。官網公開上線不在本次範圍。
+
 - **changelog_engine：**
     - 寫入與讀取的 repository、對外 API 皆已接上，workspace.ts 與 issues.ts 兩條欄位寫入路徑也都已接上
     - `rebuildFieldStateAt` 時點重建純函式已寫好，尚未掛進任何 API 或 repository，留給燃盡圖等自用深化波次需求時再補
@@ -192,11 +196,14 @@
     - 新單自動入表已完成，ListScreen 建單後自動 reload
     - 工期天數呈現已在 DevOrderScreen 完成，不是 ListScreen 缺口
     - 日曆選用已接：AddViewForm 有日曆選用 Select，留白跟隨帳號預設日曆
-    - 篩選按鈕與已套用條件展示已接：`ListScreen` 的 `FilterChipBar` 讀 `View.filterConfig` 唯讀展示；按鈕先備位 disabled，篩選面板本身互動 design 未定案，onClick 待補
+    - 清單篩選面板已接，可編輯條件並儲存至 `View.filterConfig`。套用成功後重載資料並更新條件標籤
+    - 看板卡片依工單型別判斷終止狀態、提供結案原因與隱藏已結案卡片的到期日
+    - 看板欄位仍取公司內全部工單型別的狀態聯集，尚未縮到檢視的資料來源範圍
     - DevOrderScreen 甘特圖座標轉換已完成，`devOrderGantt.ts` 有 23 組測試、已接進 views.ts 的 GET /:id/issues，三層級是後端真算的，非另開獨立主題
     - workspace.ts 種子已補 StartTime／EndTime（spec 標準欄位，帶 rollupable／earliest／latest），長條會依實際填值顯示；種子欄位本身不掛管理介面白名單，屬泛用欄位路徑可編輯
 - **web_shell：**
     - 工單詳情頁已補（`IssueDetailScreen`）：欄位／關聯／異動歷史三區，List／Kanban／DevOrder 三處入口可導覽進入
+    - 詳情頁依工單型別的欄位組配方顯示單值欄位，狀態與結案原因讀取同一型別的流程定義
     - 工單詳情頁的欄位編輯已對齊 design 定案：非唯讀欄位一律可編輯，不分值型別。白名單四欄位 title/assignee/point/due 走 workspace.ts PATCH，其餘含自訂欄位走 issues.ts 泛用路徑，兩條都已記變更歷史
     - 型別維護與定義區管理介面已補
         - `TypeDefinitionScreen` 掛載於 `/types`

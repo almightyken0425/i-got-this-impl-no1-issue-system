@@ -28,7 +28,7 @@ export function computeRollupValue(
 
   const values = subordinateIds
     .map((subordinateId) => findFieldValueRow(snapshot, subordinateId, fieldName)?.value)
-    .filter((value): value is RollupFieldValue => value !== undefined);
+    .filter((value): value is RollupFieldValue => value !== undefined && value !== null);
 
   if (values.length === 0) {
     return null;
@@ -58,6 +58,7 @@ function sumWorkLogSubtree(
   snapshot: RollupSnapshot,
   subordinateIds: string[],
   visited: Set<string>,
+  counted = new Set<string>(),
 ): number | null {
   if (subordinateIds.length === 0) {
     return null;
@@ -67,11 +68,14 @@ function sumWorkLogSubtree(
     if (visited.has(subordinateId)) {
       throw new RollupError('RELATION_CYCLE', `工單 ${subordinateId} 的彙總關聯成環`);
     }
+    if (counted.has(subordinateId)) return total;
+    counted.add(subordinateId);
 
     const descendants = sumWorkLogSubtree(
       snapshot,
       findSubordinateIds(snapshot, subordinateId),
       new Set(visited).add(subordinateId),
+      counted,
     );
 
     const reported = sumFieldRecords(snapshot, subordinateId, WORK_LOG_FIELD_NAME);

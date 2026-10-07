@@ -56,7 +56,7 @@ const EXPECTED_TABLES = [
  * spec 實體以外、由 impl 層技術需求建立的基礎設施表。
  * sessions 為自帶帳密認證的伺服器端 session 儲存，非 Model 層資料實體。
  */
-const INFRA_TABLES = ['sessions'] as const;
+const INFRA_TABLES = ['sessions', 'rollup_access_sources'] as const;
 
 const suite = testUrl ? describe : describe.skip;
 

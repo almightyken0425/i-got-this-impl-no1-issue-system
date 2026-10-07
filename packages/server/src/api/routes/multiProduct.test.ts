@@ -55,7 +55,7 @@ suite('多產品組織與建單', () => {
     expect(workflow.statusCode).toBe(200);
     const created = await call({ method: 'POST', url: '/api/workspace/issues', payload: { title: '第二產品需求', issueSetId: issueSet.id, issueTypeId } });
     expect(created.statusCode).toBe(201);
-    expect(created.json().issue).toMatchObject({ key: 'SECOND-1', title: '第二產品需求', status: '待釐清' });
+    expect(created.json().issue).toMatchObject({ key: 'SECOND-1', issueTypeId, title: '第二產品需求', status: '待釐清' });
     const stored = await call({ method: 'GET', url: `/api/issues/${created.json().issue.id}` });
     expect(stored.json().issue).toMatchObject({ issueSetId: issueSet.id, issueTypeId });
     const viewResult = await call({ method: 'POST', url: '/api/views', payload: { name: '第二產品', viewType: 'list', sourceMgmtIds: [mgmt.id], displayLevel: 1 } });
@@ -63,7 +63,10 @@ suite('多產品組織與建單', () => {
     const view = viewResult.json().view;
     const rows = await call({ method: 'GET', url: `/api/views/${view.id}/workspace-issues` });
     expect(rows.statusCode).toBe(200);
-    expect(rows.json().issues).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'SECOND-1', status: '待釐清' })]));
+    expect(rows.json().issues).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'SECOND-1', issueTypeId, status: '待釐清' })]));
+    const closed = await call({ method: 'PATCH', url: `/api/workspace/issues/${created.json().issue.id}`, payload: { status: '結案', resolution: '完成' } });
+    expect(closed.statusCode).toBe(200);
+    expect(closed.json().issue).toMatchObject({ issueTypeId, status: '結案', resolution: '完成' });
     const defaults = await call({ method: 'GET', url: '/api/workspace/issues' });
     expect(defaults.json().issues).toHaveLength(0);
   });

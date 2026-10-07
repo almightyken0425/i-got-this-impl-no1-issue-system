@@ -6,6 +6,7 @@ import { fieldRepo } from '../../db/repositories/index.js';
 import type { FieldDef, FieldKind, FieldSetDef } from '../../db/repositories/index.js';
 import type { RollupFn } from '../../domain/index.js';
 import { isForeignKeyViolation, sendError } from '../errors.js';
+import { makeDefinitionAccessGuard } from '../issueAccess.js';
 
 // 欄位路由：/api/fields 之下的欄位組定義與欄位定義的讀寫。
 //
@@ -45,7 +46,7 @@ const fieldDefBodySchema = {
     label: { type: 'string', minLength: 1, maxLength: 200 },
     readonly: { type: 'boolean', default: false },
     rollupable: { type: 'boolean', default: false },
-    rollupFn: { type: 'string', enum: [...ROLLUP_FNS], nullable: true },
+    rollupFn: { type: 'string', enum: [...ROLLUP_FNS, null], nullable: true },
     tracked: { type: 'boolean', default: false },
   },
 } as const;
@@ -96,6 +97,7 @@ export const fieldRoutes: FastifyPluginAsync<FieldRoutesOptions> = async (
   const { pool, requireAuth } = opts;
 
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', makeDefinitionAccessGuard(pool));
 
   // ---- 欄位組定義 ----
 
@@ -164,6 +166,10 @@ export const fieldRoutes: FastifyPluginAsync<FieldRoutesOptions> = async (
       }
 
       const rollupable = body.rollupable ?? false;
+      if (rollupable && (body.kind !== 'single' || !body.rollupFn ||
+        (body.rollupFn === 'sum' ? body.valueType !== 'number' : body.valueType !== 'date'))) {
+        return sendError(reply, 422, 'INVALID_ROLLUP_DEFINITION', '單值數字需選加總，單值日期需選最早或最晚');
+      }
       const def: FieldDef = {
         companyId,
         name: body.name,

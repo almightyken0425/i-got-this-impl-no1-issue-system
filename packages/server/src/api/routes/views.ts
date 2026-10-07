@@ -28,28 +28,23 @@ import {
   resolveViewCalendar,
   RollupError,
   SortPositionError,
-  WORK_LOG_FIELD_NAME,
 } from '../../domain/index.js';
 import type {
-  FieldDef,
   FilterConfig,
   Issue,
   IssueDuration,
-  IssueFieldRecord,
-  IssueFieldValue,
   IssueFilterCandidate,
   IssueTypeWorkflow,
   IsoDate,
   RelationCandidate,
-  RollupFieldValue,
-  RollupRelation,
-  RollupRelationType,
-  RollupSnapshot,
 } from '../../domain/index.js';
 import { buildGanttTimeline, toGanttBarSpan } from '../devOrderGantt.js';
 import type { GanttBarSpan } from '../devOrderGantt.js';
 import { sendError } from '../errors.js';
 import { buildContainerIndex, filterMgmtsByPermission } from '../../permission/index.js';
+import { requireIssueAccess } from '../issueAccess.js';
+import { readSnapshot } from '../../db/repositories/rollupRepo.js';
+import { createIssueReadProjection, type IssueReadProjection } from '../issueReadProjection.js';
 import type { ContainerIndex } from '../../permission/index.js';
 import { foldWorkspaceIssueFields } from '../workspaceIssueRow.js';
 import type { WorkspaceIssueRow } from '../workspaceIssueRow.js';
@@ -218,111 +213,6 @@ async function loadIssueTypeWorkflows(pool: Pool, companyId: string): Promise<Is
   return workflows;
 }
 
-/**
- * 自目標工單沿正向關聯下探，收集子樹的關聯邊與工單 id。
- * 只走既有 repository 的正查，遇已見過的工單仍記錄邊（供 domain 偵測環）但不重入隊。
- */
-async function collectSubtree(
-  pool: Pool,
-  companyId: string,
-  rootIssueId: string,
-): Promise<{ relations: RollupRelation[]; issueIds: string[] }> {
-  const relations: RollupRelation[] = [];
-  const issueIds = new Set<string>([rootIssueId]);
-  const enqueued = new Set<string>([rootIssueId]);
-  const queue: string[] = [rootIssueId];
-
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (current === undefined) break;
-    const forward = await relationRepo.findRelationsFromIssue(companyId, current, undefined, pool);
-    for (const rel of forward) {
-      relations.push({
-        companyId,
-        fromIssueId: rel.fromIssueId,
-        toIssueId: rel.toIssueId,
-        relationTypeId: rel.relationTypeId,
-      });
-      issueIds.add(rel.toIssueId);
-      if (!enqueued.has(rel.toIssueId)) {
-        enqueued.add(rel.toIssueId);
-        queue.push(rel.toIssueId);
-      }
-    }
-  }
-  return { relations, issueIds: [...issueIds] };
-}
-
-/** 組彙總快照：型別與欄位定義取全 Company，值與工時記錄限子樹工單。 */
-async function buildRollupSnapshot(
-  pool: Pool,
-  companyId: string,
-  rootIssueId: string,
-): Promise<RollupSnapshot> {
-  const [relationTypeDefs, storedFieldDefs, subtree] = await Promise.all([
-    relationRepo.listRelationTypes(companyId, pool),
-    fieldRepo.listFieldDefs(companyId, pool),
-    collectSubtree(pool, companyId, rootIssueId),
-  ]);
-
-  const relationTypes: RollupRelationType[] = relationTypeDefs.map((t) => ({
-    id: t.id,
-    companyId: t.companyId,
-    name: t.name,
-    rollup: t.rollup,
-  }));
-
-  // 收窄成彙總只需的欄位定義投影。
-  const fieldDefs: FieldDef[] = storedFieldDefs.map((d) => ({
-    companyId: d.companyId,
-    name: d.name,
-    rollupable: d.rollupable,
-    rollupFn: d.rollupFn,
-  }));
-
-  const fieldValues: IssueFieldValue[] = [];
-  const fieldRecords: IssueFieldRecord[] = [];
-  for (const issueId of subtree.issueIds) {
-    const stored = await issueRepo.listFieldValues(companyId, issueId, pool);
-    for (const row of stored) {
-      if (isRollupFieldValue(row.value)) {
-        fieldValues.push({
-          companyId,
-          issueId,
-          fieldName: row.fieldName,
-          value: row.value,
-          rollupMode: row.rollupMode,
-        });
-      }
-    }
-    const records = await fieldRepo.listFieldRecords(companyId, issueId, WORK_LOG_FIELD_NAME, pool);
-    for (const rec of records) {
-      if (typeof rec.value === 'number') {
-        fieldRecords.push({
-          id: rec.id,
-          companyId,
-          issueId,
-          fieldName: rec.fieldName,
-          value: rec.value,
-        });
-      }
-    }
-  }
-
-  return {
-    companyId,
-    relationTypes,
-    relations: subtree.relations,
-    fieldDefs,
-    fieldValues,
-    fieldRecords,
-  };
-}
-
-function isRollupFieldValue(value: unknown): value is RollupFieldValue {
-  return typeof value === 'number' || typeof value === 'string';
-}
-
 // ---- 檢視內容組裝（/:id/issues） ----
 
 /** 標題欄位名稱，對齊 workspace.ts 目前的種子欄位命名（小寫 title，非 spec 標準大寫名）。 */
@@ -402,6 +292,7 @@ async function buildFilterCandidates(
   pool: Pool,
   companyId: string,
   issues: readonly Issue[],
+  projection: IssueReadProjection,
 ): Promise<IssueFilterCandidate[]> {
   const candidates: IssueFilterCandidate[] = [];
   for (const issue of issues) {
@@ -410,7 +301,7 @@ async function buildFilterCandidates(
     for (const value of values) {
       fields[value.fieldName] = value.value;
     }
-    candidates.push({ issueId: issue.id, fields });
+    candidates.push({ issueId: issue.id, fields: projection.fields(issue.id, fields) });
   }
   return candidates;
 }
@@ -764,7 +655,8 @@ export const viewRoutes: FastifyPluginAsync<ViewRoutesOptions> = async (
       const permissionExcludedCount = (
         await collectContainerIssues(pool, companyId, deniedMgmtIds)
       ).length;
-      const candidates = await buildFilterCandidates(pool, companyId, containerIssues);
+      const projection = await createIssueReadProjection(pool, currentIdentity(request));
+      const candidates = await buildFilterCandidates(pool, companyId, containerIssues, projection);
       const { included, excludedIds } = applyViewFilter(candidates, parseFilterConfig(view.filterConfig));
 
       const sortEntries = await viewRepo.listSortEntries(pool, companyId, view.id);
@@ -811,14 +703,7 @@ export const viewRoutes: FastifyPluginAsync<ViewRoutesOptions> = async (
       // 候選工單（沿 Container/Children 關聯查到的）不在 candidateById 範圍內
       // （它們屬於不同的工單集，不是主題單位置本身），需要各自查欄位值。
       //
-      // 已知限制（記錄不修）：候選工單沿關聯往下收集時不檢查所屬 Mgmt 是否可讀——
-      // 只要主題單本身落在可讀 Mgmt，往下關聯到的子工項就會直接查欄位值、畫進甘特
-      // 長條，不管子工項實際屬於哪個 Mgmt。對應 spec 的 readCrossBoundaryRelation
-      // （關聯指向無讀取權的工單時僅提供工單編號）目前完全沒有實作。這個洞目前休眠：
-      // MVP 每個 Company 只有一顆預設 Mgmt（見 ListScreen.tsx 註解），不存在「主題單
-      // 可讀、子工項不可讀」的情境；一旦開放多 Mgmt，甘特長條的有無／長度會間接洩漏
-      // 無權限工項是否有排程。修復需要先實作 readCrossBoundaryRelation，且甘特長條在
-      // 「僅提供編號」規則下該顯示成什麼樣本身是未解的設計問題，這輪不做。
+      // 關聯下級仍依讀取者權限投影，未授權來源不產生長條。
       const levelBarsOf = async (topicIssueId: string): Promise<DevOrderLevelGroup[]> => {
         // Container 型別不存在時，連第 1 層的候選都無從查起，三層皆為 null。
         // Children 型別不存在但 Container 存在時，仍可查到第 1 層候選——只是沒有
@@ -859,6 +744,7 @@ export const viewRoutes: FastifyPluginAsync<ViewRoutesOptions> = async (
           }
           const bars: GanttBarSpan[] = [];
           for (const issueId of issueIds) {
+            if (!projection.canRead(issueId) || projection.restricted.has(issueId)) continue;
             const values = await issueRepo.listFieldValues(companyId, issueId, pool);
             const fields: Record<string, unknown> = {};
             for (const value of values) fields[value.fieldName] = value.value;
@@ -929,14 +815,16 @@ export const viewRoutes: FastifyPluginAsync<ViewRoutesOptions> = async (
       const permissionExcludedCount = (
         await collectMgmtIssues(pool, companyId, deniedMgmtIds)
       ).length;
-      const candidates = await buildFilterCandidates(pool, companyId, containerIssues);
+      const projection = await createIssueReadProjection(pool, currentIdentity(request));
+      const candidates = await buildFilterCandidates(pool, companyId, containerIssues, projection);
       const { included, excludedIds } = applyViewFilter(candidates, parseFilterConfig(view.filterConfig));
 
       const issueById = new Map(containerIssues.map((issue) => [issue.id, issue]));
       const issues: WorkspaceIssueRow[] = included.map((candidate) => ({
         id: candidate.issueId,
         key: issueById.get(candidate.issueId)?.issueKey ?? '',
-        ...foldWorkspaceIssueFields(candidate.fields),
+        issueTypeId: issueById.get(candidate.issueId)!.issueTypeId,
+        ...foldWorkspaceIssueFields(candidate.fields, projection.restrictedFields(candidate.issueId)),
       }));
 
       return reply
@@ -964,7 +852,14 @@ export const viewRoutes: FastifyPluginAsync<ViewRoutesOptions> = async (
     async (request, reply) => {
       const { companyId } = currentIdentity(request);
       const { issueId, fieldName } = request.query;
-      const snapshot = await buildRollupSnapshot(pool, companyId, issueId);
+      if (!(await requireIssueAccess(pool, currentIdentity(request), issueId, 'read', reply))) return;
+      const projection = await createIssueReadProjection(pool, currentIdentity(request));
+      if (projection.restricted.has(issueId)) return sendError(reply, 403, 'ROLLUP_SOURCE_FORBIDDEN', '彙總來源權限不足');
+      const def = await fieldRepo.findFieldDef(companyId, fieldName, pool);
+      if (!def) return sendError(reply, 422, 'FIELD_NOT_DEFINED', '欄位未定義');
+      if (!def.rollupable) return sendError(reply, 422, 'FIELD_NOT_ROLLUPABLE', '欄位不可彙總');
+      if (!projection.inRecipe(issueId, fieldName)) return sendError(reply, 422, 'FIELD_NOT_IN_RECIPE', '欄位不在此型別配方內');
+      const snapshot = await readSnapshot(pool, companyId);
       try {
         const value = computeRollupValue(snapshot, issueId, fieldName);
         return reply.status(200).send({ value });

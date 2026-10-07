@@ -331,6 +331,14 @@ export async function deleteFieldRecord(
   return rows.length > 0;
 }
 
+/** 修正填報值，保留原作者與填報時間。 */
+export async function updateFieldRecordValue(companyId: string, id: string, value: unknown, exec: Executor): Promise<IssueFieldRecord | undefined> {
+  const row = await runOne<IssueFieldRecordRow>(exec,
+    'UPDATE issue_field_records SET value = $3 WHERE company_id = $1 AND id = $2 RETURNING *',
+    [companyId, id, JSON.stringify(value)]);
+  return row ? toIssueFieldRecord(row) : undefined;
+}
+
 // ============================================================
 // 變更歷史：寫入
 // ============================================================

@@ -13,6 +13,7 @@ describe('foldWorkspaceIssueFields', () => {
       resolution: '已完成',
     });
     expect(result).toEqual({
+      fields: { title: '標題', status: '處理中', assignee: '成員甲', point: 3, due: '2026-09-01', resolution: '已完成' },
       title: '標題',
       status: '處理中',
       assignee: '成員甲',
@@ -25,6 +26,7 @@ describe('foldWorkspaceIssueFields', () => {
   it('欄位全缺：title/assignee 空字串，status 回退預設值，point/due/resolution 為 null', () => {
     const result = foldWorkspaceIssueFields({});
     expect(result).toEqual({
+      fields: {},
       title: '',
       status: '待處理',
       assignee: '',

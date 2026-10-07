@@ -15,7 +15,8 @@
 
 import { useCallback, useMemo, useState } from 'react';
 
-import { ApiError, fieldsApi, issueTypesApi } from '../../api';
+import { ApiError, apiFetch, fieldsApi, issueTypesApi } from '../../api';
+import { DefinitionPlanningTabs } from './DefinitionPlanningTabs';
 import type { FieldDef, FieldSetDef, IssueTypeDefinition } from '../../api';
 import { Button } from '../../components/controls';
 import { DataTable, EmptyState } from '../../components/data';
@@ -38,6 +39,8 @@ import { TYPE_DEFINITION_SCREEN_TOKENS as TD } from './tokens';
 const TABS = [
   { id: 'fields', label: '欄位' },
   { id: 'types', label: '工單型別' },
+  { id: 'relations', label: '關聯型別' },
+  { id: 'calendars', label: '工作日曆' },
 ] as const;
 
 const KIND_LABEL: Record<FieldDef['kind'], string> = { single: '單值', multi: '多筆', relation: '關聯' };
@@ -48,6 +51,7 @@ const ROLLUP_FN_LABEL: Record<'earliest' | 'latest' | 'sum', string> = {
 };
 
 interface TypeDefinitionData {
+  readonly typeAdmin: boolean;
   readonly fieldSets: readonly FieldSetDef[];
   readonly fieldDefs: readonly FieldDef[];
   readonly issueTypes: readonly IssueTypeDefinition[];
@@ -60,12 +64,13 @@ function toActionError(error: unknown): string {
 export function TypeDefinitionScreen() {
   const { theme } = useTheme();
   const fetcher = useCallback(async (): Promise<TypeDefinitionData> => {
-    const [fieldSets, fieldDefs, issueTypes] = await Promise.all([
+    const [fieldSets, fieldDefs, issueTypes, permission] = await Promise.all([
       fieldsApi.listFieldSets(),
       fieldsApi.listFieldDefs(),
       issueTypesApi.listIssueTypes(),
+      apiFetch<{ effective: { typeAdmin: boolean } }>('/api/permissions/effective'),
     ]);
-    return { fieldSets, fieldDefs, issueTypes };
+    return { fieldSets, fieldDefs, issueTypes, typeAdmin: permission.effective.typeAdmin };
   }, []);
   const { data, loading, error, reload } = useAsync(fetcher);
 
@@ -165,7 +170,7 @@ export function TypeDefinitionScreen() {
       render: (_value, row) => {
         const field = fieldsInSelectedSet.find((f) => f.name === row.id);
         if (field === undefined) return null;
-        if (field.system) return null;
+        if (field.system || !data?.typeAdmin) return null;
         if (editingFieldName === field.name) {
           return (
             <EditFieldLabelForm
@@ -208,7 +213,7 @@ export function TypeDefinitionScreen() {
       align: 'right',
       render: (_value, row) => {
         const issueType = issueTypes.find((t) => t.id === row.id);
-        if (issueType === undefined) return null;
+        if (issueType === undefined || !data?.typeAdmin) return null;
         if (editingIssueTypeId === issueType.id) {
           return (
             <EditIssueTypeRecipeForm
@@ -268,7 +273,7 @@ export function TypeDefinitionScreen() {
         )}
 
         {tab === 'fields' ? (
-          <div style={{ display: 'flex', gap: TD.COLUMN_GAP, alignItems: 'flex-start' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: TD.COLUMN_GAP, alignItems: 'flex-start' }}>
             <div style={{ width: TD.FIELD_SET_COL_WIDTH, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: TD.GROUP_GAP }}>
               <span style={{ color: theme.text.tertiary, padding: `0 ${TD.ROW_PADDING_X}px` }}>欄位組</span>
               <div style={{ display: 'flex', flexDirection: 'column', gap: TD.ACTION_GAP }}>
@@ -282,13 +287,13 @@ export function TypeDefinitionScreen() {
                         onClick={() => setSelectedFieldSet(fs.name)}
                       />
                     </div>
-                    {!fs.system && (
+                    {!fs.system && data?.typeAdmin && (
                       <Button variant="ghost" size="sm" label="移除" onClick={() => onDeleteFieldSet(fs.name)} />
                     )}
                   </div>
                 ))}
               </div>
-              {showNewFieldSetForm ? (
+              {data?.typeAdmin && (showNewFieldSetForm ? (
                 <NewFieldSetForm
                   onSubmit={onCreateFieldSet}
                   onCancel={() => setShowNewFieldSetForm(false)}
@@ -296,28 +301,28 @@ export function TypeDefinitionScreen() {
                 />
               ) : (
                 <Button variant="secondary" size="sm" iconLeft="plus" fullWidth label="新增欄位組" onClick={() => setShowNewFieldSetForm(true)} />
-              )}
+              ))}
             </div>
 
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: TD.GROUP_GAP }}>
+            <div style={{ flex: '1 1 320px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: TD.GROUP_GAP }}>
               {selectedFieldSet === null ? (
                 <EmptyState title="尚未選取欄位組" description="從左側選一個欄位組，檢視與管理組內的欄位定義。" />
               ) : (
                 <>
                   <DataTable columns={fieldColumns} rows={fieldRows} />
-                  {showNewFieldForm ? (
+                  {data?.typeAdmin && (showNewFieldForm ? (
                     <FieldForm onSubmit={onCreateField} onCancel={() => setShowNewFieldForm(false)} submitting={submitting} />
                   ) : (
                     <Button variant="secondary" size="sm" iconLeft="plus" label="新增欄位" onClick={() => setShowNewFieldForm(true)} />
-                  )}
+                  ))}
                 </>
               )}
             </div>
           </div>
-        ) : (
+        ) : tab === 'types' ? (
           <>
             <DataTable columns={typeColumns} rows={typeRows} />
-            {showNewIssueTypeForm ? (
+            {data?.typeAdmin && (showNewIssueTypeForm ? (
               <IssueTypeForm
                 availableFieldSets={fieldSetNames}
                 onSubmit={onCreateIssueType}
@@ -326,9 +331,9 @@ export function TypeDefinitionScreen() {
               />
             ) : (
               <Button variant="secondary" size="sm" iconLeft="plus" label="新增工單型別" onClick={() => setShowNewIssueTypeForm(true)} />
-            )}
+            ))}
           </>
-        )}
+        ) : <DefinitionPlanningTabs key={tab} tab={tab} canEdit={data?.typeAdmin ?? false} />}
       </div>
     </div>
   );

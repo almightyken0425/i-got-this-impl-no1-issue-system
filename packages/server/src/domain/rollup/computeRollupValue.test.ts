@@ -77,6 +77,24 @@ describe('computeRollupValue 套用算法', () => {
 });
 
 describe('computeRollupValue 收集下級', () => {
+  it('同一下級透過兩種關聯指入時只計一次', () => {
+    const snap = makeSnapshot({
+      relations: [relation('parent', 'child', CHILDREN_TYPE_ID), relation('parent', 'child', CONTAINER_TYPE_ID)],
+      fieldValues: [fieldValue('child', 'StoryPoint', 3)],
+      fieldRecords: [workLog('child', 2)],
+    });
+    expect(computeRollupValue(snap, 'parent', 'StoryPoint')).toBe(3);
+    expect(computeRollupValue(snap, 'parent', 'WorkLog')).toBe(2);
+  });
+
+  it('工時經不同路徑抵達同一孫節點時只計一次', () => {
+    const snap = makeSnapshot({
+      relations: [relation('root', 'a'), relation('root', 'b'), relation('a', 'leaf', CHILDREN_TYPE_ID), relation('b', 'leaf', CONTAINER_TYPE_ID)],
+      fieldRecords: [workLog('leaf', 2)],
+    });
+    expect(computeRollupValue(snap, 'root', 'WorkLog')).toBe(2);
+  });
+
   it('彙總開關為假的關聯型別不收，Before 的被指端不入帳', () => {
     const snap = makeSnapshot({
       relations: [

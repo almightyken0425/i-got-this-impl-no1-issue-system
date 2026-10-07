@@ -5,10 +5,12 @@ import type { Pool } from 'pg';
 
 import { currentIdentity } from '../../auth/middleware.js';
 import { withTransaction } from '../../db/client.js';
-import { relationRepo, RelationRepoError } from '../../db/repositories/index.js';
+import { containerRepo, issueRepo, relationRepo, RelationRepoError } from '../../db/repositories/index.js';
+import { refreshRollups } from '../../db/repositories/rollupRepo.js';
 import { validateRelationTypeDefinition } from '../../domain/index.js';
 import type { RelationTypeDefinition } from '../../domain/index.js';
 import { sendError, sendValidationFailure } from '../errors.js';
+import { canRemoveRelation, issueCapabilities, makeDefinitionAccessGuard, requireIssueAccess } from '../issueAccess.js';
 
 // 關聯路由：/api/relations 之下的關聯型別定義讀寫、工單關聯建立與正反查。
 //
@@ -95,13 +97,29 @@ export const relationRoutes: FastifyPluginAsync<RelationRoutesOptions> = async (
 
   // 全路由掛認證：無有效 session 一律 401。
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', async (request, reply) => {
+    const identity = currentIdentity(request);
+    const params = request.params as { issueId?: string; id?: string };
+    if (params.issueId !== undefined) {
+      await requireIssueAccess(pool, identity, params.issueId, 'read', reply);
+    } else if (request.routeOptions.url?.endsWith('/edges') && request.method === 'POST') {
+      const body = request.body as CreateRelationBody;
+      if (!(await requireIssueAccess(pool, identity, body.fromIssueId, 'edit', reply))) return;
+      await requireIssueAccess(pool, identity, body.toIssueId, 'read', reply);
+    } else if (request.routeOptions.url?.endsWith('/edges/:id') && request.method === 'DELETE') {
+      const relation = await relationRepo.findRelationById(identity.companyId, params.id!, pool);
+      if (relation !== undefined && !(await canRemoveRelation(pool, identity, relation))) {
+        void sendError(reply, 403, 'FORBIDDEN', '沒有此關聯的移除權限');
+      }
+    }
+  });
 
   // ---- 關聯型別定義 ----
 
   // 建立關聯型別；開關組合先過 domain 檢查，名稱在 Company 內唯一。
   app.post<{ Body: RelationTypeBody }>(
     '/types',
-    { schema: { body: relationTypeBodySchema } },
+    { schema: { body: relationTypeBodySchema }, preHandler: makeDefinitionAccessGuard(pool) },
     async (request, reply) => {
       const { companyId } = currentIdentity(request);
       const switches = {
@@ -164,12 +182,13 @@ export const relationRoutes: FastifyPluginAsync<RelationRoutesOptions> = async (
     '/edges',
     { schema: { body: createRelationBodySchema } },
     async (request, reply) => {
-      const { companyId } = currentIdentity(request);
+      const { companyId, accountId } = currentIdentity(request);
       const now = Date.now();
       try {
         const result = await withTransaction(
-          (tx) =>
-            relationRepo.createRelation(
+          async (tx) => {
+            await containerRepo.lockCompanyForUpdate(companyId, tx);
+            const result = await relationRepo.createRelation(
               {
                 id: randomUUID(),
                 companyId,
@@ -181,7 +200,10 @@ export const relationRoutes: FastifyPluginAsync<RelationRoutesOptions> = async (
                 updatedOn: now,
               },
               tx,
-            ),
+            );
+            if (result.ok) await refreshRollups(tx, companyId, accountId);
+            return result;
+          },
           pool,
         );
         if (!result.ok) {
@@ -209,7 +231,13 @@ export const relationRoutes: FastifyPluginAsync<RelationRoutesOptions> = async (
         request.query.relationTypeId,
         pool,
       );
-      return reply.status(200).send({ relations });
+      const visible = await Promise.all(relations.map(async (relation) => ({
+        ...relation,
+        counterpartKey: (await issueRepo.getIssue(companyId, relation.toIssueId, pool))?.issueKey ?? relation.toIssueId,
+        counterpartReadable: (await issueCapabilities(pool, currentIdentity(request), relation.toIssueId)).canRead,
+        canRemove: await canRemoveRelation(pool, currentIdentity(request), relation),
+      })));
+      return reply.status(200).send({ relations: visible });
     },
   );
 
@@ -225,7 +253,13 @@ export const relationRoutes: FastifyPluginAsync<RelationRoutesOptions> = async (
         request.query.relationTypeId,
         pool,
       );
-      return reply.status(200).send({ relations });
+      const visible = await Promise.all(relations.map(async (relation) => ({
+        ...relation,
+        counterpartKey: (await issueRepo.getIssue(companyId, relation.fromIssueId, pool))?.issueKey ?? relation.fromIssueId,
+        counterpartReadable: (await issueCapabilities(pool, currentIdentity(request), relation.fromIssueId)).canRead,
+        canRemove: await canRemoveRelation(pool, currentIdentity(request), relation),
+      })));
+      return reply.status(200).send({ relations: visible });
     },
   );
 
@@ -234,8 +268,13 @@ export const relationRoutes: FastifyPluginAsync<RelationRoutesOptions> = async (
     '/edges/:id',
     { schema: { params: idParamsSchema } },
     async (request, reply) => {
-      const { companyId } = currentIdentity(request);
-      const deleted = await relationRepo.deleteRelation(companyId, request.params.id, pool);
+      const { companyId, accountId } = currentIdentity(request);
+      const deleted = await withTransaction(async (tx) => {
+        await containerRepo.lockCompanyForUpdate(companyId, tx);
+        const result = await relationRepo.deleteRelation(companyId, request.params.id, tx);
+        if (result) await refreshRollups(tx, companyId, accountId);
+        return result;
+      }, pool);
       if (!deleted) {
         return sendError(reply, 404, 'RELATION_NOT_FOUND', '工單關聯不存在');
       }

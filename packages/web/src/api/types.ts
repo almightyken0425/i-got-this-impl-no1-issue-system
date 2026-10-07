@@ -47,7 +47,10 @@ export interface WorkspaceResolutionOption {
 
 /** 工單 + 欄位單值摺疊而成的加值列。三個畫面共用的工單資料形狀。 */
 export interface WorkspaceIssue {
+  readonly restrictedFields?: readonly string[];
+  readonly fields?: Readonly<Record<string, unknown>>;
   readonly id: string;
+  readonly issueTypeId: string;
   readonly key: string;
   readonly title: string;
   readonly status: string;
@@ -330,6 +333,7 @@ export interface UpdateWorkflowDefinitionInput {
 
 /** 工單單一欄位值。對齊 issueRepo 的 StoredFieldValue。 */
 export interface IssueFieldValue {
+  readonly restricted?: boolean;
   readonly companyId: string;
   readonly issueId: string;
   readonly fieldName: string;
@@ -339,6 +343,7 @@ export interface IssueFieldValue {
 
 /** 一筆變更歷史：對齊 domain 的 ChangeLogEntry，另帶 id 供列表 key 使用。 */
 export interface ChangeLogEntry {
+  readonly restricted?: boolean;
   readonly id: string;
   readonly fieldName: string;
   readonly oldValue: unknown;
@@ -365,6 +370,9 @@ export interface RelationTypeDefinition {
 
 /** 工單關聯。對齊 domain 的 IssueRelation；只存持有端一側，正反查見 relations.ts。 */
 export interface IssueRelation {
+  readonly counterpartKey?: string;
+  readonly counterpartReadable?: boolean;
+  readonly canRemove?: boolean;
   readonly id: string;
   readonly companyId: string;
   readonly fromIssueId: string;
@@ -374,4 +382,35 @@ export interface IssueRelation {
   readonly exclusive: boolean;
   readonly createdOn: number;
   readonly updatedOn: number;
+}
+
+export interface WorkLogRecord {
+  readonly id: string;
+  readonly value: number;
+  readonly authorId: string;
+  readonly createdOn: number;
+}
+
+export interface RollupStatus {
+  readonly fieldName: string;
+  readonly mode: 'auto' | 'manual';
+  readonly hasChildren: boolean;
+  readonly value: string | number | null;
+  readonly restricted?: boolean;
+  readonly deviation: { readonly deviated: false } | {
+    readonly deviated: true;
+    readonly delta: number;
+    readonly unit: 'calendarDay' | 'workingDay' | 'point';
+    readonly calendarName: string | null;
+    readonly mainValue: string | number;
+    readonly rollupValue: string | number;
+  };
+}
+
+export interface IssueContext {
+  readonly canEdit: boolean;
+  readonly canArchive: boolean;
+  readonly calendarName: string | null;
+  readonly rollups: readonly RollupStatus[];
+  readonly worklogs: readonly WorkLogRecord[];
 }

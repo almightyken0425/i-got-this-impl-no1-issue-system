@@ -5,12 +5,29 @@
 // 以外）的編輯走這條；白名單欄位仍走 workspace.ts 既有的 PATCH。
 
 import { apiFetch } from './client';
-import type { ChangeLogEntry, IssueFieldValue, IssueSummary } from './types';
+import type { ChangeLogEntry, IssueContext, IssueFieldValue, IssueSummary, WorkLogRecord } from './types';
 
 /** 取單張工單的基本識別（不含欄位值）；查無時 apiFetch 對 404 拋 ApiError。 */
 export async function getIssue(issueId: string): Promise<IssueSummary> {
   const res = await apiFetch<{ issue: IssueSummary }>(`/api/issues/${issueId}`);
   return res.issue;
+}
+
+export async function getIssueByKey(key: string): Promise<IssueSummary> {
+  return (await apiFetch<{ issue: IssueSummary }>(`/api/issues/by-key/${encodeURIComponent(key)}`)).issue;
+}
+
+export function getIssueContext(issueId: string, calendarName?: string | null): Promise<IssueContext> {
+  return apiFetch(`/api/issues/${issueId}/context${calendarName ? `?calendarName=${encodeURIComponent(calendarName)}` : ''}`);
+}
+
+export async function writeWorkLog(issueId: string, hours: number, recordId?: string): Promise<WorkLogRecord> {
+  return (await apiFetch<{ record: WorkLogRecord }>(`/api/issues/${issueId}/worklogs${recordId ? `/${recordId}` : ''}`,
+    { method: recordId ? 'PUT' : 'POST', body: { hours } })).record;
+}
+
+export function removeWorkLog(issueId: string, recordId: string): Promise<void> {
+  return apiFetch(`/api/issues/${issueId}/worklogs/${recordId}`, { method: 'DELETE' });
 }
 
 /** 列出一張工單的全部單值欄位。 */
@@ -26,10 +43,11 @@ export async function updateFieldValue(
   issueId: string,
   fieldName: string,
   value: unknown,
+  rollupMode?: 'auto' | 'manual',
 ): Promise<IssueFieldValue> {
   const res = await apiFetch<{ fieldValue: IssueFieldValue }>(
-    `/api/issues/${issueId}/fields/${fieldName}`,
-    { method: 'PUT', body: { value } },
+    `/api/issues/${issueId}/fields/${encodeURIComponent(fieldName)}`,
+    { method: 'PUT', body: { value, ...(rollupMode ? { rollupMode } : {}) } },
   );
   return res.fieldValue;
 }

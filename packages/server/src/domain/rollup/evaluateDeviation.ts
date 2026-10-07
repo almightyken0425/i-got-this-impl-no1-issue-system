@@ -54,7 +54,7 @@ export function evaluateDeviation(
   const mainValue = findFieldValueRow(snapshot, issueId, fieldName)?.value;
 
   // 任一側缺值就沒有兩個數可比，不標示。
-  if (rollupValue === null || mainValue === undefined || rollupValue === mainValue) {
+  if (rollupValue === null || mainValue == null || rollupValue === mainValue) {
     return { deviated: false };
   }
 

@@ -90,6 +90,7 @@ suite('relation routes', () => {
     session = await registerSession(app);
     call = authed(app, session.cookie);
     containers = await seedContainers(pool, session.companyId);
+    await call({ method: 'GET', url: '/api/workspace' });
   });
 
   // ---- helpers ----
