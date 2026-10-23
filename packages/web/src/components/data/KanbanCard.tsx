@@ -12,6 +12,7 @@ import { useState } from 'react';
 import type { DragEvent, KeyboardEvent, MouseEvent } from 'react';
 
 import {
+  F4_LAYOUT,
   DATA_DISPLAY_COLORS,
   DATA_DISPLAY_TOKENS,
   FONT_FAMILY,
@@ -33,11 +34,13 @@ import {
   useSpinKeyframes,
 } from './internal';
 import { toDateValue, toStatusValue, toUserValue } from './types';
+import { F4Icon } from '../controls/F4Icon';
 
 const K = DATA_DISPLAY_TOKENS.KANBAN;
 
 export interface KanbanCardProps {
   readonly issueKey: string;
+  readonly id?: string;
   readonly title: string;
   /** 字串即姓名；物件讀 name。省略則不畫負責人。 */
   readonly assignee?: unknown;
@@ -61,6 +64,7 @@ export interface KanbanCardProps {
 
 export function KanbanCard({
   issueKey,
+  id,
   title,
   assignee,
   status,
@@ -101,6 +105,10 @@ export function KanbanCard({
 
   return (
     <article
+      id={id}
+      role="button"
+      aria-label={`${issueKey} ${title}`}
+      className="f4-issue-card"
       draggable={draggable && interactive}
       tabIndex={interactive ? 0 : -1}
       aria-disabled={disabled || undefined}
@@ -121,9 +129,12 @@ export function KanbanCard({
       }}
       style={{
         position: 'relative',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: K.CARD_ROW_GAP,
+        display: 'grid',
+        gridTemplateColumns: `${F4_LAYOUT.thumbnailWidth}px minmax(0, 1fr)`,
+        columnGap: SPACING.md,
+        minHeight: F4_LAYOUT.cardMinHeight,
+        boxSizing: 'border-box',
+        alignItems: 'center',
         padding: `${K.CARD_PADDING_Y}px ${K.CARD_PADDING_X}px`,
         background: c.cardBg,
         border: `${K.CARD_BORDER_WIDTH}px solid ${borderColor}`,
@@ -138,6 +149,10 @@ export function KanbanCard({
         ...(focus ? focusStyleCss(c, K.CARD_FOCUS_RING_WIDTH, K.CARD_FOCUS_RING_OFFSET) : null),
       }}
     >
+      <div aria-hidden="true" className="f4-card-glyph" style={{ alignSelf: 'stretch', display: 'grid', placeItems: 'center', minHeight: F4_LAYOUT.thumbnailHeight, borderRadius: F4_LAYOUT.thumbnailRadius, color: theme.primary.main, background: theme.state.selected.bg }}>
+        <F4Icon name="issue" size={38} />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: K.CARD_ROW_GAP, minWidth: 0 }}>
       {/* 編號與狀態 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: SPACING.xs, minWidth: 0 }}>
         <span
@@ -243,6 +258,7 @@ export function KanbanCard({
           )}
         </div>
       )}
+      </div>
     </article>
   );
 }

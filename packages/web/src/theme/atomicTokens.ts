@@ -1,17 +1,4 @@
-// Atomic tokens · 色彩 / 主題 / 陰影
-//
-// 來源：design git 的 `10_foundations/no1_atomic_tokens.jsx`。
-//
-// 仲裁關係：design git 是視覺標準的唯一仲裁端，impl 逐名對齊、不自行設值。
-// 取值要變先在 design 定案，再回搬本檔；本檔不得單獨調數值或新增色階。
-// export 名稱與 design 逐名相同，兩層對照零翻譯成本。
-//
-// 色彩方向採 L · Pine Paper 深林紙感：主色種子 #004643 落 pine 800、
-// 底色種子 #F0EDE5 落 sand 100。光暗雙主題共用 PALETTE 與 SHADOW_ELEVATION，
-// light 為預設。design 端的 TOKENS 為 canvas 渲染快照，impl 不對齊、故不搬。
-
-// ─── 色階的階位型別 ───────────────────────────────────────────
-
+// F4 灰藍主題。sand / PRIMARY_PINE 保留相容識別名，值由本次 Foundations 定案。
 export type SandStep = 0 | 50 | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900 | 950 | 1000;
 export type PineStep = 50 | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900;
 
@@ -24,29 +11,21 @@ export type SemanticScale = { readonly [K in SemanticName]: string };
 export type ThemeId = 'light' | 'dark';
 export type ElevationLevel = 'level0' | 'level1' | 'level2' | 'level3';
 
-// ─── PALETTE ─────────────────────────────────────────────────
-// sand 暖中性階：色相全程鎖 43° 暖米，飽和度中段最低降到 12–15%、
-// 最深的文字階回升到 19–21%，避免深階退回中性灰、暖調斷掉。
-// 0 為抬起的紙面（取代冷系的純白）、100 為畫布底、950 與 1000 供暗主題與陰影。
-//
-// semantic 四色為 light theme 的 status 主色基準（dark 在 THEME_DARK 內提亮）。
-// 這四色只承載色彩身份；badge 文字另走 status.<name>_fg 深階，見 THEME_LIGHT.status。
-
 export const PALETTE = {
   sand: {
-    0: '#FBF9F4',
-    50: '#F6F4EF',
-    100: '#F0EDE5',
-    200: '#E5E1D7',
-    300: '#D3CEC0',
-    400: '#9F9783',
-    500: '#89816C',
-    600: '#6B6452',
-    700: '#514C3D',
-    800: '#393428',
-    900: '#252118',
-    950: '#17140E',
-    1000: '#0A0806',
+    0: '#FFFFFF',
+    50: '#F8F9FB',
+    100: '#F0F2F6',
+    200: '#E5E8ED',
+    300: '#CDD3DD',
+    400: '#A5AFBF',
+    500: '#7F8999',
+    600: '#677384',
+    700: '#4D596C',
+    800: '#384355',
+    900: '#2C3441',
+    950: '#171D29',
+    1000: '#0E1320',
   },
   semantic: {
     success: '#16A34A',
@@ -56,30 +35,18 @@ export const PALETTE = {
   },
 } as const satisfies { readonly sand: SandScale; readonly semantic: SemanticScale };
 
-// ─── PRIMARY_PINE ────────────────────────────────────────────
-// 主色 pine 十階，種子 #004643 落 800、色相鎖 177°。
-// main 取值由各 theme 決定（light 取 800 保 AA 對比、dark 取 400 提亮）。
-// 800 亮度僅 14%，直接承按鈕、對白字 10.73:1；50–400 淺階刻意拉開飽和與亮度差，
-// 讓 50 選取底不糊、700 承 key 與選取邊線不糊成黑。
-
 export const PRIMARY_PINE = {
-  50: '#F0F9F8',
-  100: '#DFF1F0',
-  200: '#C0E3E1',
-  300: '#98CDCB',
-  400: '#65B3B1',
-  500: '#359794',
-  600: '#1F7A77',
-  700: '#0B605D',
-  800: '#004643',
-  900: '#002E2C',
+  50: '#EDF0FC',
+  100: '#E1E7FB',
+  200: '#CBD5F8',
+  300: '#B5C3F7',
+  400: '#A2B3FF',
+  500: '#7A91EA',
+  600: '#6680E0',
+  700: '#526CCE',
+  800: '#4663D2',
+  900: '#354FAF',
 } as const satisfies PineScale;
-
-// ─── SHADOW_ELEVATION ────────────────────────────────────────
-// 雙主題共享的陰影三階（offsetY / blur / opacity，color 由 theme.shadow.color 引用）。
-// level0 為「無陰影」placeholder。桌面工具陰影節制：
-// level1 卡片、level2 dropdown / popover、level3 modal。
-// 陰影色吃 sand 深階而非中性黑，疊透明度後仍保暖調、不在紙面上壓出灰霧。
 
 export interface ShadowElevationStep {
   readonly offsetY: number;
@@ -95,11 +62,6 @@ export const SHADOW_ELEVATION = {
   level2: { offsetY: 4, blur: 12, opacity: 0.1 },
   level3: { offsetY: 12, blur: 32, opacity: 0.18 },
 } as const satisfies ShadowElevation;
-
-// ─── Theme 型別 ──────────────────────────────────────────────
-// 兩個主題共用同一份型別，消費端因此不必分支 theme.id 就能讀任一鍵。
-// 需要分支的只有「同色系推一階」這類方向相反的 hover，分支寫在 component token 的
-// resolver 內，不外洩到元件。
 
 export interface ThemeBg {
   /** app 底：工作區外框、page 背景 */
@@ -203,34 +165,30 @@ export interface Theme {
   readonly shadow: ThemeShadow;
 }
 
-// ─── THEME_LIGHT ─────────────────────────────────────────────
-
 export const THEME_LIGHT: Theme = {
   id: 'light',
   name: 'Light（預設）',
   bg: {
-    base: PALETTE.sand[100], // 紙感畫布底 #F0EDE5
-    surface: PALETTE.sand[0], // 抬起的紙面 #FBF9F4
+    base: PALETTE.sand[0],
+    surface: PALETTE.sand[0],
     surface_hover: PALETTE.sand[50],
-    surface_dim: 'rgba(37,33,24,0.04)', // 暖墨疊透明度
+    surface_dim: '#F8F9FB',
   },
-  // tertiary 由 sand[400] 下探到 sand[600]、secondary 推深到 sand[700]，
-  // L* 12.9 / 32.4 / 42.5，三階都過 4.5:1。
   text: {
-    primary: PALETTE.sand[900], // 對紙面 15.24:1、對畫布底 13.71:1
-    secondary: PALETTE.sand[700], // 對紙面 8.14:1、對畫布底 7.32:1
-    tertiary: PALETTE.sand[600], // 對紙面 5.59:1、對畫布底 5.03:1
+    primary: PALETTE.sand[900],
+    secondary: PALETTE.sand[700],
+    tertiary: PALETTE.sand[600],
   },
   border: {
-    base: PALETTE.sand[200], // 對紙面 1.24:1
-    strong: PALETTE.sand[300], // 對紙面 1.49:1
-    input: PALETTE.sand[500], // 對紙面 3.68:1、對畫布底 3.31:1，兩底都過 3:1
+    base: PALETTE.sand[200],
+    strong: PALETTE.sand[300],
+    input: PALETTE.sand[500],
   },
   divider: {
     base: PALETTE.sand[200],
-    hairline: 'rgba(37,33,24,0.08)',
+    hairline: '#E5E8ED',
   },
-  primary: { main: PRIMARY_PINE[800], on_main: '#FFFFFF', ...PRIMARY_PINE }, // 白字對 pine[800] 10.73:1
+  primary: { main: PRIMARY_PINE[800], on_main: '#FFFFFF', ...PRIMARY_PINE },
   status: {
     success: PALETTE.semantic.success,
     success_bg: '#E0EFE0',
@@ -247,15 +205,12 @@ export const THEME_LIGHT: Theme = {
   },
   state: {
     hover: { bg: PALETTE.sand[50] },
-    // 選取態：50 淡底 + 800 文字（10.02:1）+ 700 邊線，邊線比 main 淺一階、不糊成黑。
     selected: { bg: PRIMARY_PINE[50], fg: PRIMARY_PINE[800], border: PRIMARY_PINE[700] },
     disabled: { fg: PALETTE.sand[400], opacity: 0.45 },
     focus: { ring: PRIMARY_PINE[700], ringWidth: 2 },
   },
   shadow: { color: PALETTE.sand[900], elevation: SHADOW_ELEVATION },
 };
-
-// ─── THEME_DARK ──────────────────────────────────────────────
 
 export const THEME_DARK: Theme = {
   id: 'dark',
@@ -264,28 +219,23 @@ export const THEME_DARK: Theme = {
     base: PALETTE.sand[950],
     surface: PALETTE.sand[900],
     surface_hover: PALETTE.sand[800],
-    surface_dim: 'rgba(251,249,244,0.04)', // 暖白疊透明度
+    surface_dim: 'rgba(255,255,255,0.04)',
   },
-  // 與 light 鏡像：L* 93.8 / 82.8 / 62.6，對 surface 與對 base 兩底都過 4.5:1。
   text: {
-    primary: PALETTE.sand[100], // 對 surface 13.71:1、對 base 15.71:1
-    secondary: PALETTE.sand[300], // 對 surface 10.20:1、對 base 11.69:1
-    tertiary: PALETTE.sand[400], // 對 surface 5.52:1、對 base 6.33:1
+    primary: PALETTE.sand[100],
+    secondary: PALETTE.sand[300],
+    tertiary: PALETTE.sand[400],
   },
   border: {
-    base: PALETTE.sand[800], // 對 surface 1.30:1
-    strong: PALETTE.sand[700], // 對 surface 1.87:1
-    input: PALETTE.sand[500], // 對 surface 4.14:1、對 base 4.74:1
+    base: PALETTE.sand[800],
+    strong: PALETTE.sand[700],
+    input: PALETTE.sand[500],
   },
   divider: {
     base: PALETTE.sand[800],
-    hairline: 'rgba(159,151,131,0.14)', // sand[400] 疊透明度，暗底細線不轉冷灰
+    hairline: 'rgba(165,175,191,0.14)',
   },
-  // 暗底主色取 pine[400]：對 surface 6.60:1、對 base 7.56:1；
-  // on_main 改吃 sand[1000] 深墨，對亮主色 8.22:1。
   primary: { main: PRIMARY_PINE[400], on_main: PALETTE.sand[1000], ...PRIMARY_PINE },
-  // semantic 前景整體提亮一階、_bg 為同色 12% 疊在 surface 上的暖深淡底；
-  // _fg 與提亮後的 <name> 同值，badge 消費端在雙主題吃同一組鍵。
   status: {
     success: '#4ADE80',
     success_bg: '#293824',
@@ -302,18 +252,12 @@ export const THEME_DARK: Theme = {
   },
   state: {
     hover: { bg: PALETTE.sand[800] },
-    // 選取底為 pine[400] 疊 10%。alpha 由 16% 降到 10% 是對比預算逼出來的：
-    // 16% 時疊在選取列上的 text.tertiary 只剩 4.16:1、status.error_fg 4.37:1，
-    // 降到 10% 後兩者回到 4.66 與 4.90，selected.fg 也從 6.90 升到 7.69。
-    // 選取感另有 2px 左側 accent 條與 border 撐，不靠這層底獨撐。
-    selected: { bg: 'rgba(101,179,177,0.10)', fg: PRIMARY_PINE[300], border: PRIMARY_PINE[400] },
+    selected: { bg: 'rgba(162,179,255,0.10)', fg: PRIMARY_PINE[300], border: PRIMARY_PINE[400] },
     disabled: { fg: PALETTE.sand[600], opacity: 0.45 },
     focus: { ring: PRIMARY_PINE[400], ringWidth: 2 },
   },
   shadow: { color: PALETTE.sand[1000], elevation: SHADOW_ELEVATION },
 };
-
-// ─── 主題註冊表 ──────────────────────────────────────────────
 
 export const THEMES: { readonly [K in ThemeId]: Theme } = {
   light: THEME_LIGHT,

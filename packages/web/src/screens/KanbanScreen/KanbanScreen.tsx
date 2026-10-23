@@ -17,19 +17,19 @@
 //           data（KanbanColumn / KanbanCard / EmptyState），
 //           本檔私有 KanbanDropSlot / KanbanResolutionPrompt。
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DragEvent } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 
 import { ApiError, workspaceApi } from '../../api';
 import type { View } from '../../api';
 import { useCurrentView } from '../../app/CurrentViewContext';
-import { Button, Chip, TextInput } from '../../components/controls';
+import { Chip, TextInput } from '../../components/controls';
 import { EmptyState, FilterNotice, KanbanCard, KanbanColumn } from '../../components/data';
 import type { DueTone } from '../../components/data';
-import { Toolbar } from '../../components/gantt';
+import { F4Action } from '../../components/controls/F4Icon';
 import { useAsync } from '../../hooks/useAsync';
-import { FONT_FAMILY, useTheme } from '../../theme';
+import { F4_LAYOUT, FONT_FAMILY, SPACING, useTheme } from '../../theme';
 import { typeStyle } from '../typeStyle';
 import { isTerminalStatus, loadKanbanData } from './data';
 import type { KanbanData, KanbanIssue } from './data';
@@ -37,6 +37,7 @@ import { KanbanDropSlot, KanbanResolutionPrompt } from './internal';
 import { KANBAN_SCREEN_TOKENS } from './tokens';
 
 const K = KANBAN_SCREEN_TOKENS;
+let pendingReturnFocus: { locationKey: string; issueId: string } | null = null;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -68,6 +69,7 @@ export function KanbanScreen() {
 function KanbanView({ currentView }: { readonly currentView: View | null }) {
   const { theme } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const fetcher = useCallback(async (): Promise<KanbanData | null> => {
     if (currentView === null) return null;
@@ -76,6 +78,11 @@ function KanbanView({ currentView }: { readonly currentView: View | null }) {
   const { data, loading, error, reload } = useAsync(fetcher);
 
   const [search, setSearch] = useState('');
+  useEffect(() => {
+    if (!data || pendingReturnFocus?.locationKey !== location.key) return;
+    document.getElementById(`issue-${pendingReturnFocus.issueId}`)?.focus();
+    pendingReturnFocus = null;
+  }, [data, location.key]);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [dropColumnId, setDropColumnId] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
@@ -173,6 +180,7 @@ function KanbanView({ currentView }: { readonly currentView: View | null }) {
     <div
       style={{
         width: '100%',
+        containerType: 'inline-size',
         minHeight: '100%',
         display: 'flex',
         flexDirection: 'column',
@@ -181,26 +189,23 @@ function KanbanView({ currentView }: { readonly currentView: View | null }) {
         fontFamily: FONT_FAMILY.base,
       }}
     >
-      <Toolbar
-        left={
-          <span
-            style={{ ...typeStyle(K.VIEW_TITLE_TYPE), color: theme.text.primary, whiteSpace: 'nowrap' }}
-          >
-            工單看板
-          </span>
+      <style>{`
+        .f4-board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: ${F4_LAYOUT.boardGap}px; padding: 0 ${F4_LAYOUT.pagePadding}px 32px; }
+        .f4-board-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 16px ${F4_LAYOUT.pagePadding}px 12px; }
+        .f4-board-search { margin-left: auto; width: min(300px, 100%); }
+        @container (max-width: ${F4_LAYOUT.singleColumnBreakpoint}px) {
+          .f4-board { grid-template-columns: minmax(0, 1fr); padding: 0 16px 24px; }
+          .f4-board-heading { padding: 12px 16px; }
+          .f4-board-heading h1 { width: 100%; }
+          .f4-board-search { margin-left: 0; flex: 1; }
+          .f4-issue-card { grid-template-columns: 64px minmax(0, 1fr) !important; }
         }
-        center={
-          <TextInput
-            leadingIcon="search"
-            placeholder="搜尋工單編號或標題"
-            value={search}
-            onChange={setSearch}
-            clearable
-            style={{ width: K.SEARCH_WIDTH }}
-          />
-        }
-        right={<Button variant="ghost" label="重新整理" onClick={() => void reload()} />}
-      />
+      `}</style>
+      <header className="f4-board-heading">
+        <h1 style={{ margin: 0, fontSize: 29, lineHeight: 1.3, fontWeight: 600 }}>工單看板</h1>
+        <div className="f4-board-search"><TextInput leadingIcon="search" placeholder="搜尋工單" value={search} onChange={setSearch} clearable fullWidth /></div>
+        <F4Action name="refresh" label="重新整理看板" onClick={() => void reload()} />
+      </header>
 
       <div
         style={{
@@ -208,7 +213,7 @@ function KanbanView({ currentView }: { readonly currentView: View | null }) {
           alignItems: 'center',
           gap: K.FILTER_BAR_GAP,
           flexWrap: 'wrap',
-          padding: `${K.FILTER_BAR_PADDING_Y}px ${K.PADDING_X}px`,
+          padding: `${SPACING.sm}px ${F4_LAYOUT.pagePadding}px`,
         }}
       >
         {chips.map((chip) => (
@@ -228,7 +233,7 @@ function KanbanView({ currentView }: { readonly currentView: View | null }) {
         <div style={{ padding: `0 ${K.PADDING_X}px` }}>
           <EmptyState
             title="尚無檢視"
-            description="請先在左側「當前檢視」新增一張檢視，才能載入看板。"
+            description="從上方新增檢視，選擇要看的工單範圍。"
           />
         </div>
       ) : error !== undefined ? (
@@ -245,21 +250,12 @@ function KanbanView({ currentView }: { readonly currentView: View | null }) {
           載入中…
         </div>
       ) : (
-        <div
-          style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: K.BOARD_GAP,
-            padding: `0 ${K.PADDING_X}px ${K.PADDING_BOTTOM}px`,
-            overflowX: 'auto',
-          }}
-        >
+        <div className="f4-board">
           {columns.map((columnId) => {
             const cards = visibleIssues.filter((issue) => issue.status === columnId);
             const isDropTarget = draggingKey !== null && dropColumnId === columnId;
             return (
-              <div key={columnId} style={{ flexShrink: 0, position: 'relative' }}>
+              <div key={columnId} style={{ minWidth: 0, position: 'relative' }}>
                 <KanbanColumn
                   title={columnId}
                   count={cards.length}
@@ -270,11 +266,12 @@ function KanbanView({ currentView }: { readonly currentView: View | null }) {
                 >
                   {isDropTarget && <KanbanDropSlot label={`放到「${columnId}」`} />}
                   {cards.length === 0 && !isDropTarget ? (
-                    <EmptyState compact title="這一欄沒有工單" description="拖曳其他欄的卡片進來。" />
+                    <EmptyState compact title="這一欄沒有工單" description="拖曳工單至此階段。" />
                   ) : (
                     cards.map((issue) => (
                       <KanbanCard
                         key={issue.key}
+                        id={`issue-${issue.id}`}
                         issueKey={issue.key}
                         title={issue.title}
                         assignee={issue.assignee === '' ? undefined : issue.assignee}
@@ -282,7 +279,10 @@ function KanbanView({ currentView }: { readonly currentView: View | null }) {
                         ghost={draggingKey === issue.key}
                         loading={pendingKey === issue.key}
                         draggable
-                        onClick={() => navigate(`/issues/${issue.id}`)}
+                        onClick={() => {
+                          pendingReturnFocus = { locationKey: location.key, issueId: issue.id };
+                          navigate(`/issues/${issue.id}`);
+                        }}
                         onDragStart={(event) => onCardDragStart(issue.key, event)}
                         onDragEnd={endDrag}
                       />

@@ -9,13 +9,12 @@
 
 import { useState } from 'react';
 
-import { Badge, Button } from '../../components/controls';
+import { Button, Select } from '../../components/controls';
 import {
   controlShadow,
   DATA_DISPLAY_COLORS,
   FONT_FAMILY,
   NUMERIC_FONT_VARIANT,
-  RADIUS,
   useTheme,
 } from '../../theme';
 import { typeStyle } from '../typeStyle';
@@ -80,7 +79,6 @@ export function KanbanResolutionPrompt({
 }: KanbanResolutionPromptProps) {
   const { theme } = useTheme();
   const [picked, setPicked] = useState<string | null>(null);
-  const [hovered, setHovered] = useState<string | null>(null);
 
   return (
     <div
@@ -88,9 +86,10 @@ export function KanbanResolutionPrompt({
       aria-label="選擇結案原因"
       style={{
         position: 'absolute',
+        zIndex: 10,
         top: K.PROMPT_TOP,
-        left: -K.PROMPT_SIDE_OVERHANG,
-        right: -K.PROMPT_SIDE_OVERHANG,
+        left: 0,
+        right: 0,
         display: 'flex',
         flexDirection: 'column',
         gap: K.PROMPT_GAP,
@@ -118,71 +117,9 @@ export function KanbanResolutionPrompt({
         {` 拖入 ${targetLabel}`}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {options.map((option) => {
-          const active = picked === option.value;
-          const live = hovered === option.value && !active;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              onClick={() => setPicked(option.value)}
-              onMouseEnter={() => setHovered(option.value)}
-              onMouseLeave={() => setHovered(null)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: K.PROMPT_OPTION_GAP,
-                height: K.PROMPT_OPTION_HEIGHT,
-                padding: `0 ${K.PROMPT_OPTION_PADDING_X}px`,
-                border: 'none',
-                borderRadius: K.PROMPT_OPTION_RADIUS,
-                background: active
-                  ? theme.state.selected.bg
-                  : live
-                    ? theme.state.hover.bg
-                    : 'transparent',
-                color: active ? theme.state.selected.fg : theme.text.primary,
-                cursor: 'pointer',
-                textAlign: 'left',
-                fontFamily: FONT_FAMILY.base,
-                ...typeStyle(K.PROMPT_OPTION_TYPE),
-                transition: `background ${K.TRANSITION_MS}ms ${K.TRANSITION_EASING}`,
-              }}
-            >
-              <span
-                style={{
-                  width: K.PROMPT_RADIO_SIZE,
-                  height: K.PROMPT_RADIO_SIZE,
-                  flexShrink: 0,
-                  borderRadius: RADIUS.full,
-                  border: `${K.PROMPT_RADIO_BORDER}px solid ${
-                    active ? theme.state.selected.border : theme.border.input
-                  }`,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                {active && (
-                  <span
-                    style={{
-                      width: K.PROMPT_RADIO_DOT_SIZE,
-                      height: K.PROMPT_RADIO_DOT_SIZE,
-                      borderRadius: RADIUS.full,
-                      background: theme.state.selected.border,
-                    }}
-                  />
-                )}
-              </span>
-              <span style={{ flex: 1, minWidth: 0 }}>{option.value}</span>
-              <Badge tone="neutral" label="Resolution" dot={false} />
-            </button>
-          );
-        })}
-      </div>
+      <Select label="結案原因" placeholder="選擇結案原因" fullWidth
+        options={options.map(option => ({ value: option.value, label: option.value }))}
+        {...(picked === null ? {} : { value: picked })} onChange={setPicked} />
 
       <div
         style={{
@@ -193,8 +130,8 @@ export function KanbanResolutionPrompt({
         }}
       >
         {picked === null
-          ? '終止狀態必填結案原因，未選不得送出。'
-          : '確認後寫入 Resolution 與 Status，卡片移至目標欄。'}
+          ? '請先選擇結案原因。'
+          : '確認後移至目標階段。'}
       </div>
 
       <div

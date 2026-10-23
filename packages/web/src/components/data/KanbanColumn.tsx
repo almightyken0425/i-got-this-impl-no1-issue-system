@@ -50,8 +50,9 @@ export function KanbanColumn({
       onDragOver={onDragOver}
       onDrop={onDrop}
       style={{
-        width: K.COLUMN_WIDTH,
-        minWidth: K.COLUMN_MIN_WIDTH,
+        width: '100%',
+        boxSizing: 'border-box',
+        minWidth: 0,
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',

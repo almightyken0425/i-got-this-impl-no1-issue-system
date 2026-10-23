@@ -178,6 +178,7 @@ export function IssueDetailScreen() {
 function IssueDetailContent({ issueId }: { readonly issueId: string }) {
   const { theme } = useTheme();
   const navigate = useNavigate();
+  const goBack = () => navigate(-1);
   const { account } = useAuth();
   const { currentView } = useCurrentView();
 
@@ -437,6 +438,8 @@ function IssueDetailContent({ issueId }: { readonly issueId: string }) {
       .issue-content { max-width: ${T.CONTENT_MAX_WIDTH}px; margin: 0 auto; padding: ${T.PAGE_PADDING_Y}px ${T.PAGE_PADDING_X}px; box-sizing: border-box; }
       .issue-body { display: grid; grid-template-columns: ${T.DETAIL_COLUMNS}; gap: ${T.CONTENT_GAP}px; align-items: start; }
       .issue-properties { grid-column: 2; grid-row: 1; min-width: 0; }
+      .issue-detail select { width: 100%; }
+      .issue-detail * { box-sizing: border-box; }
       .issue-main { grid-column: 1; grid-row: 1; min-width: 0; }
       .issue-editable:hover, .issue-editable:focus-visible { background: ${theme.bg.surface_hover} !important; }
       .issue-editable:focus-visible { outline: 2px solid ${theme.state.focus.ring}; outline-offset: 2px; }
@@ -448,12 +451,13 @@ function IssueDetailContent({ issueId }: { readonly issueId: string }) {
         .issue-content { padding: ${T.MOBILE_PADDING}px; }
         .issue-body { display: flex; flex-direction: column; gap: 0; }
         .issue-properties, .issue-main { width: 100%; }
+        .issue-detail section { padding: 16px !important; }
         .issue-edit-hint { opacity: 1; }
       }
     `}</style>
     <div className="issue-content">
       <div style={{ display: 'flex', alignItems: 'center', gap: T.HEADER_GAP, color: theme.text.secondary, ...typeStyle(TYPE_STYLES.bodySm) }}>
-        <Button variant="ghost" label="← 返回" onClick={() => navigate(-1)} /><span aria-hidden="true">/</span><span style={{ fontFamily: FONT_FAMILY.mono }}>{data?.issue.issueKey ?? '工單詳情'}</span>
+        <Button variant="ghost" label="← 返回" onClick={goBack} /><span aria-hidden="true">/</span><span style={{ fontFamily: FONT_FAMILY.mono }}>{data?.issue.issueKey ?? '工單詳情'}</span>
       </div>
       {error !== undefined ? <EmptyState icon="clock" title="載入工單失敗" description={error} action={{ label: '重試', onClick: () => void reload() }} /> : loading && data === undefined ? <p role="status">載入中…</p> : data !== undefined ? <>
         <h1 style={{ ...typeStyle(T.TITLE_TYPE), margin: `${SPACING.xl}px 0 ${SPACING.md}px`, overflowWrap: 'anywhere' }}>

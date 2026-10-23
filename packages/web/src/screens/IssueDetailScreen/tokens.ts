@@ -5,8 +5,8 @@ export const ISSUE_DETAIL_SCREEN_TOKENS = {
   CONTENT_MAX_WIDTH: SPACING['4xl'] * 24,
   RESPONSIVE_WIDTH: SPACING['4xl'] * 16,
   TITLE_TYPE: { ...TYPE_STYLES.pageTitle, size: TYPOGRAPHY.size['3xl'], lineHeight: SPACING['2xl'] },
-  DETAIL_COLUMNS: 'minmax(0, 1fr) minmax(240px, 300px)',
-  CONTENT_GAP: SPACING['3xl'],
+  DETAIL_COLUMNS: 'minmax(0, 1fr) minmax(280px, 340px)',
+  CONTENT_GAP: SPACING.xl,
   EDIT_HEIGHT: SPACING['3xl'],
   MOBILE_PADDING: SPACING.lg,
   PAGE_PADDING_X: SPACING['3xl'], // 24

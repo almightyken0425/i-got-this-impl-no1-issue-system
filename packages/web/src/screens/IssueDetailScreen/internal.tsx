@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { F4Icon } from '../../components/controls/F4Icon';
 import { Button, Select } from '../../components/controls';
 import type { SelectOption } from '../../components/controls';
 import {
@@ -48,12 +49,14 @@ export function SectionPanel({ title, children }: SectionPanelProps) {
         flexDirection: 'column',
         gap: T.PANEL_GAP,
         minWidth: 0,
-        padding: `${T.PANEL_PADDING}px 0`,
-        background: theme.bg.surface,
-        borderTop: `${T.PANEL_BORDER_WIDTH}px solid ${theme.border.base}`,
+        padding: T.PANEL_PADDING,
+        marginBottom: T.BODY_GAP,
+        borderRadius: T.PANEL_RADIUS,
+        background: theme.bg.surface_hover,
+        border: `${T.PANEL_BORDER_WIDTH}px solid ${theme.border.base}`,
       }}
     >
-      <h2 style={{ ...typeStyle(T.PANEL_TITLE_TYPE), margin: 0, color: theme.text.primary }}>{title}</h2>
+      <h2 style={{ ...typeStyle(T.PANEL_TITLE_TYPE), margin: 0, color: theme.text.primary, display: 'flex', alignItems: 'center', gap: 10 }}><span style={{ color: theme.primary.main }}><F4Icon name={title.includes('關聯') ? 'relation' : title.includes('歷史') ? 'history' : 'issue'} size={18} /></span>{title}</h2>
       {children}
     </section>
   );

@@ -27,51 +27,20 @@ import { useEffect, useState } from 'react';
 
 import { accountsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
+import { F4Action, F4Icon } from '../../components/controls/F4Icon';
+import type { F4IconName } from '../../components/controls/F4Icon';
 import { Button, Select } from '../../components/controls';
 import { useCalendars } from '../../hooks/useCalendars';
 import {
-  BORDER_WIDTH,
+  F4_LAYOUT,
   FONT_FAMILY,
-  MOTION,
-  RADIUS,
   SPACING,
-  TYPE_STYLES,
   useTheme,
 } from '../../theme';
 import type { Theme } from '../../theme';
-import { typeStyle } from '../../screens/typeStyle';
 import { CurrentViewProvider, useCurrentView } from '../CurrentViewContext';
 import { NAV_ITEMS } from '../routes';
 import { AddViewForm } from './AddViewForm';
-
-const SHELL_TOKENS = {
-  SIDEBAR_WIDTH: SPACING['4xl'] * 4 + SPACING.lg,
-  SIDEBAR_PADDING: SPACING.lg,
-  SIDEBAR_GAP: SPACING.xl,
-  SIDEBAR_BORDER_WIDTH: BORDER_WIDTH.hairline,
-
-  BRAND_TYPE: TYPE_STYLES.sectionTitle,
-  BRAND_META_TYPE: TYPE_STYLES.caption,
-  BRAND_GAP: SPACING['2xs'],
-
-  GROUP_GAP: SPACING.sm,
-
-  NAV_GAP: SPACING['2xs'],
-  NAV_GROUP_TYPE: TYPE_STYLES.overline,
-  NAV_ITEM_HEIGHT: SPACING['3xl'],
-  NAV_ITEM_PADDING_X: SPACING.sm,
-  NAV_ITEM_GAP: SPACING.sm,
-  NAV_ITEM_RADIUS: RADIUS.sm,
-  NAV_ITEM_TYPE: TYPE_STYLES.body,
-  /** 選取態的左側指示條，與表格選取列同一個語彙。 */
-  NAV_ACCENT_WIDTH: BORDER_WIDTH.focus,
-  NAV_ACCENT_HEIGHT: SPACING.lg, // 16
-
-  TRANSITION_MS: MOTION.duration.instant,
-  TRANSITION_EASING: MOTION.easing.standard,
-} as const;
-
-const S = SHELL_TOKENS;
 
 interface NavItemProps {
   readonly theme: Theme;
@@ -79,105 +48,28 @@ interface NavItemProps {
   readonly label: string;
 }
 
+const NAV_ICONS: Record<string, F4IconName> = { '/list': 'list', '/kanban': 'kanban', '/dev-order': 'timeline', '/types': 'types', '/workflow': 'workflow', '/organization': 'organization' };
 function NavItem({ theme, to, label }: NavItemProps) {
-  return (
-    <NavLink
-      to={to}
-      style={({ isActive }) => ({
-        position: 'relative',
-        display: 'flex',
-        alignItems: 'center',
-        gap: S.NAV_ITEM_GAP,
-        height: S.NAV_ITEM_HEIGHT,
-        padding: `0 ${S.NAV_ITEM_PADDING_X}px`,
-        borderRadius: S.NAV_ITEM_RADIUS,
-        textDecoration: 'none',
-        whiteSpace: 'nowrap',
-        background: isActive ? theme.state.selected.bg : 'transparent',
-        color: isActive ? theme.state.selected.fg : theme.text.secondary,
-        fontWeight: isActive ? TYPE_STYLES.bodyMedium.weight : TYPE_STYLES.bodySm.weight,
-        transition: `background ${S.TRANSITION_MS}ms ${S.TRANSITION_EASING}`,
-        ...typeStyle(S.NAV_ITEM_TYPE),
-      })}
-    >
-      {({ isActive }) => (
-        <>
-          <span
-            aria-hidden="true"
-            style={{
-              width: S.NAV_ACCENT_WIDTH,
-              height: S.NAV_ACCENT_HEIGHT,
-              flexShrink: 0,
-              borderRadius: RADIUS.full,
-              background: isActive ? theme.state.selected.border : 'transparent',
-            }}
-          />
-          {label}
-        </>
-      )}
-    </NavLink>
-  );
-}
-
-function GroupLabel({ theme, children }: { readonly theme: Theme; readonly children: string }) {
-  return (
-    <span
-      style={{
-        ...typeStyle(S.NAV_GROUP_TYPE),
-        color: theme.text.tertiary,
-        padding: `0 ${S.NAV_ITEM_PADDING_X}px`,
-      }}
-    >
-      {children}
-    </span>
-  );
+  return <NavLink to={to} aria-label={label} title={label} className="f4-nav-link"
+    style={({ isActive }) => ({ display: 'grid', placeItems: 'center', width: F4_LAYOUT.touchTarget, minHeight: F4_LAYOUT.touchTarget, borderRadius: F4_LAYOUT.controlRadius,
+      textDecoration: 'none', color: isActive ? theme.primary.main : theme.text.secondary, background: isActive ? theme.state.selected.bg : 'transparent' })}>
+    <F4Icon name={NAV_ICONS[to] ?? 'issue'} />
+  </NavLink>;
 }
 
 function CurrentViewSection({ theme }: { readonly theme: Theme }) {
   const { views, currentView, selectView, loading, error, retry } = useCurrentView();
   const [adding, setAdding] = useState(false);
-
-  // 三態：載入失敗（可重試）與「真的沒有檢視」文案不同，避免使用者把
-  // 一次可重試的載入失敗誤判成帳號下沒有任何檢視。
-  const emptyLabel =
-    error !== undefined ? '載入檢視失敗' : loading ? '載入中…' : '尚無檢視';
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: S.GROUP_GAP }}>
-      <GroupLabel theme={theme}>當前檢視</GroupLabel>
-      {views.length > 0 ? (
-        <Select
-          size="sm"
-          options={views.map((v) => ({ value: v.id, label: v.name }))}
-          {...(currentView !== null ? { value: currentView.id } : {})}
-          onChange={selectView}
-        />
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: S.NAV_GAP }}>
-          <span
-            role={error !== undefined ? 'alert' : undefined}
-            style={{
-              ...typeStyle(S.BRAND_META_TYPE),
-              color: error !== undefined ? theme.status.error_fg : theme.text.tertiary,
-              padding: `0 ${S.NAV_ITEM_PADDING_X}px`,
-            }}
-          >
-            {emptyLabel}
-          </span>
-          {error !== undefined && (
-            <Button variant="ghost" size="sm" fullWidth label="重試" onClick={retry} />
-          )}
-        </div>
-      )}
-      <Button
-        variant="secondary"
-        fullWidth
-        label="新增檢視"
-        onClick={() => setAdding((prev) => !prev)}
-      />
-      {adding && <AddViewForm onCancel={() => setAdding(false)} onCreated={() => setAdding(false)} />}
-    </div>
-  );
+  return <div style={{ display: 'flex', alignItems: 'center', gap: SPACING.sm, position: 'relative', minWidth: 0, flex: 1 }}>
+    {views.length > 0 ? <Select label="當前檢視" options={views.map(v => ({ value: v.id, label: v.name }))}
+      {...(currentView !== null ? { value: currentView.id } : {})} onChange={selectView} style={{ maxWidth: '100%' }} /> :
+      <span role={error ? 'alert' : 'status'} style={{ color: theme.text.secondary }}>{error ? '檢視載入失敗' : loading ? '載入中…' : '尚無檢視'}</span>}
+    {error && <Button variant="ghost" label="重試" onClick={retry} />}
+    <F4Action name={adding ? 'close' : 'plus'} label={adding ? '取消新增檢視' : '新增檢視'} aria-expanded={adding} onClick={() => setAdding(open => !open)} />
+    {adding && <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, width: 'min(440px, calc(100vw - 32px))', maxHeight: 'calc(100dvh - 160px)', overflowY: 'auto', boxSizing: 'border-box', background: theme.bg.surface, border: `1px solid ${theme.border.base}`, borderRadius: F4_LAYOUT.moduleRadius, padding: SPACING.lg }}>
+      <AddViewForm onCancel={() => setAdding(false)} onCreated={() => setAdding(false)} />
+    </div>}
+  </div>;
 }
 
 /** 帳號預設日曆選用：個人偏好，選了立即持久化（對應 spec PermissionLogic / setDefaultCalendar）。 */
@@ -213,102 +105,42 @@ function AppShellInner() {
   const { theme, themeId, toggleTheme } = useTheme();
   const { account, logout } = useAuth();
   const location = useLocation();
-  const [navigationOpen, setNavigationOpen] = useState(false);
-  useEffect(() => setNavigationOpen(false), [location.pathname]);
-
-  return (
-    <div className="app-shell"
-      style={{
-        display: 'flex',
-        alignItems: 'stretch',
-        height: '100%',
-        background: theme.bg.base,
-        color: theme.text.primary,
-        fontFamily: FONT_FAMILY.base,
-      }}
-    >
-      <style>{`
-        .shell-mobile { display: none; }
-        .shell-navigation { box-sizing: border-box; }
-        @media (max-width: ${SPACING['4xl'] * 16}px) {
-          .app-shell { flex-direction: column; }
-          .shell-mobile { display: flex; justify-content: space-between; align-items: center; padding: ${SPACING.md}px ${SPACING.lg}px; background: ${theme.bg.surface}; border-bottom: 1px solid ${theme.border.base}; }
-          .shell-navigation { display: none !important; }
-          .shell-navigation[data-open="true"] { display: flex !important; width: 100% !important; max-height: 65vh; border-bottom: 1px solid ${theme.border.base}; }
-          .shell-main { min-height: 0; }
-        }
-      `}</style>
-      <div className="shell-mobile">
-        <strong style={typeStyle(TYPE_STYLES.sectionTitle)}>IGotThis</strong>
-        <button type="button" aria-controls="shell-navigation" aria-expanded={navigationOpen}
-          onClick={() => setNavigationOpen(open => !open)}
-          style={{ background: 'transparent', color: theme.primary.main, border: 0, minHeight: SPACING['3xl'], padding: SPACING.sm, font: 'inherit', cursor: 'pointer' }}>
-          {navigationOpen ? '收合導覽 ×' : '導覽 ☰'}
-        </button>
-      </div>
-      <aside id="shell-navigation" className="shell-navigation" data-open={navigationOpen}
-        style={{
-          width: S.SIDEBAR_WIDTH,
-          flexShrink: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: S.SIDEBAR_GAP,
-          padding: S.SIDEBAR_PADDING,
-          background: theme.bg.base,
-          borderRight: `${S.SIDEBAR_BORDER_WIDTH}px solid ${theme.border.base}`,
-          overflowY: 'auto',
-        }}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: S.BRAND_GAP, minWidth: 0 }}>
-          <span style={{ ...typeStyle(S.BRAND_TYPE), color: theme.primary.main }}>IGotThis<span aria-hidden="true"> ↗</span></span>
-          <span style={{ ...typeStyle(S.BRAND_META_TYPE), color: theme.text.tertiary }}>
-            工單系統
-          </span>
-        </div>
-
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => setSettingsOpen(false), [location.pathname]);
+  return <div className="f4-shell" style={{ height: '100%', display: 'flex', gap: F4_LAYOUT.railGap, padding: SPACING.lg, boxSizing: 'border-box', color: theme.text.primary, background: theme.bg.base, fontFamily: FONT_FAMILY.base }}>
+    <style>{`
+      .f4-rail { width: ${F4_LAYOUT.rail}px; display: flex; flex-direction: column; align-items: center; gap: 20px; flex-shrink: 0; padding: 16px 0; border-radius: 18px; }
+      .f4-nav { display: flex; flex-direction: column; gap: 8px; }
+      .f4-workspace { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+      .f4-topbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px 20px; position: relative; }
+      .f4-nav-link:hover { outline: 1px solid ${theme.border.strong}; }
+      @media (max-width: ${F4_LAYOUT.mobileBreakpoint}px) {
+        .f4-shell { flex-direction: column; padding: 0 !important; gap: 0 !important; }
+        .f4-rail { order: 2; width: 100%; border-radius: 0; padding: 6px 0 max(6px, env(safe-area-inset-bottom)); border-top: 1px solid ${theme.border.base}; }
+        .f4-brand { display: none; }
+        .f4-nav { flex-direction: row; gap: 2px; justify-content: space-evenly; width: 100%; }
+        .f4-workspace { min-height: 0; }
+        .f4-topbar { padding: 12px 16px; }
+      }
+    `}</style>
+    <aside className="f4-rail" style={{ background: theme.bg.surface_hover }}>
+      <span className="f4-brand" aria-label="I Got This" style={{ color: theme.primary.main, fontWeight: 800, fontSize: 17 }}>IG<span aria-hidden="true">↗</span></span>
+      <nav className="f4-nav" aria-label="主導覽">{NAV_ITEMS.map(item => <NavItem key={item.path} theme={theme} to={item.path} label={item.label} />)}</nav>
+    </aside>
+    <div className="f4-workspace">
+      <header className="f4-topbar">
         <CurrentViewSection theme={theme} />
-
-        <nav
-          aria-label="主導覽"
-          style={{ display: 'flex', flexDirection: 'column', gap: S.NAV_GAP, flex: 1 }}
-        >
-          <GroupLabel theme={theme}>畫面</GroupLabel>
-          {NAV_ITEMS.map((item) => (
-            <NavItem key={item.path} theme={theme} to={item.path} label={item.label} />
-          ))}
-        </nav>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: S.NAV_GAP }}>
-          {account !== null && (
-            <span
-              style={{
-                ...typeStyle(S.BRAND_META_TYPE),
-                color: theme.text.tertiary,
-                padding: `0 ${S.NAV_ITEM_PADDING_X}px`,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {account.name}
-            </span>
-          )}
-          <AccountCalendarSelect />
-          <Button
-            variant="secondary"
-            fullWidth
-            label={themeId === 'dark' ? '切換為淺色主題' : '切換為深色主題'}
-            onClick={toggleTheme}
-          />
+        <F4Action name="account" label="帳號設定" aria-expanded={settingsOpen} aria-controls="f4-account" onClick={() => setSettingsOpen(open => !open)} />
+        {settingsOpen && <section id="f4-account" aria-label="帳號設定" onKeyDown={event => { if (event.key === 'Escape') { setSettingsOpen(false); (document.querySelector('button[aria-controls="f4-account"]') as HTMLButtonElement)?.focus(); } }}
+          style={{ position: 'absolute', right: SPACING.lg, top: '100%', zIndex: 40, width: 'min(280px, calc(100vw - 32px))', boxSizing: 'border-box', padding: SPACING.lg, borderRadius: F4_LAYOUT.moduleRadius, border: `1px solid ${theme.border.base}`, background: theme.bg.surface, display: 'flex', flexDirection: 'column', gap: SPACING.md }}>
+          <strong>{account?.name}</strong><AccountCalendarSelect />
+          <Button variant="secondary" fullWidth label={themeId === 'dark' ? '切換為淺色主題' : '切換為深色主題'} onClick={toggleTheme} />
           <Button variant="ghost" fullWidth label="登出" onClick={() => void logout()} />
-        </div>
-      </aside>
-
-      <main className="shell-main" style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
-        <Outlet />
-      </main>
+        </section>}
+      </header>
+      <main style={{ flex: 1, minWidth: 0, overflow: 'auto' }}><Outlet /></main>
     </div>
-  );
+  </div>;
 }
 
 export function AppShell() {
